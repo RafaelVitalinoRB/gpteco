@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useStore } from '../../store/useStore';
-import { OP, Rolo, MachineCode, FioTipo, Especificacao, Cliente } from '../../types';
-import { generateId, generateSpecKey, calculateGramatura, calculatePesoEstimado, formatPeso, formatGramatura } from '../../lib/utils';
+import { OP, MachineCode, FioTipo, Especificacao, Cliente } from '../../types';
+import { generateSpecKey, calculateGramatura, calculatePesoEstimado, formatPeso, formatGramatura } from '../../lib/utils';
 import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
@@ -11,7 +10,7 @@ type NormalizedCliente = Cliente & { nome?: string };
 
 export default function OPs() {
   const navigate = useNavigate();
-  const { ops, addOP, updateOP, deleteOP } = useStore();
+  const [ops, setOps] = useState<OP[]>([]);
   const [clientes, setClientes] = useState<NormalizedCliente[]>([]);
   const [especificacoes, setEspecificacoes] = useState<Especificacao[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -86,6 +85,43 @@ export default function OPs() {
         };
       });
       setEspecificacoes(normalizedEsps);
+
+      const { data: opsData, error: opsErr } = await supabase
+        .from('ordens_producao')
+        .select('*')
+        .order('id', { ascending: false });
+
+      if (opsErr) throw opsErr;
+
+      const normalizedOPs: OP[] = (opsData || []).map((o: any) => ({
+        id: o.id?.toString() || '',
+        codigo: o.codigo || '',
+        clienteId: o.cliente_id?.toString() || '',
+        tipoFio: (o.tipo_fio as FioTipo) || 'POLIESTER',
+        tituloFio: o.titulo_fio || '',
+        totalFios: Number(o.total_fios) || 0,
+        especificacaoId: o.especificacao_id?.toString() || '',
+        maquina: (o.maquina as MachineCode) || 'MAQUINA 1',
+        urgencia: (o.urgencia as any) || 'BAIXA',
+        rolete: o.rolete || '',
+        qtdRolos: Number(o.quantidade_planejada || o.quantidade_rolos) || 1,
+        unidadeProducao: (o.unidade_producao as any) || 'METROS',
+        metros: o.metros != null ? Number(o.metros) : undefined,
+        voltas: o.voltas != null ? Number(o.voltas) : undefined,
+        faca: Number(o.faca) || 0,
+        avanco: Number(o.avanco) || 0,
+        pente: Number(o.pente) || 0,
+        abertura: Number(o.abertura) || 0,
+        largura: Number(o.largura) || 0,
+        isDesenho: Boolean(o.is_desenho),
+        composicao: o.composicao || [],
+        gramatura: Number(o.gramatura) || 0,
+        pesoEstimadoKg: Number(o.peso_estimado) || 0,
+        status: (o.status as any) || 'PENDENTE',
+        createdAt: o.criado_em || '',
+        updatedAt: o.atualizado_em || o.criado_em || ''
+      }));
+      setOps(normalizedOPs);
     } catch (err: any) {
       console.error('Erro ao carregar dados do Supabase:', err);
       toast.error('Erro ao carregar dados: ' + (err?.message || 'Falha na conexão'));
@@ -194,7 +230,7 @@ export default function OPs() {
     return parseFloat(val.replace(',', '.'));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const isM3M4 = formData.maquina === 'MAQUINA 3' || formData.maquina === 'MAQUINA 4';
 
@@ -225,78 +261,115 @@ export default function OPs() {
 
     const gramatura = calculateGramatura(foundEsp.totalFios, foundEsp.tituloFio, foundEsp.tipoFio);
     const pesoEstimado = calculatePesoEstimado(gramatura, formData.metros || 0);
+    const qtdRolosInformada = Number(formData.qtdRolos) || 1;
 
-    const commonData = {
-      clienteId: formData.clienteId!,
-      tipoFio: foundEsp.tipoFio,
-      tituloFio: foundEsp.tituloFio,
-      totalFios: foundEsp.totalFios,
-      especificacaoId: foundEsp.id,
-      maquina: formData.maquina as MachineCode,
-      urgencia: formData.urgencia as any,
-      rolete: formData.rolete || '',
-      qtdRolos: formData.qtdRolos || 1,
-      unidadeProducao: (isM3M4 ? 'VOLTAS' : 'METROS') as any,
-      metros: isM3M4 ? undefined : formData.metros,
-      voltas: isM3M4 ? formData.voltas : undefined,
-      // Snapshot
-      faca: foundEsp.faca,
-      avanco: isM3M4 ? foundEsp.avanco : 0,
-      pente: foundEsp.pente,
-      abertura: foundEsp.abertura,
-      largura: foundEsp.largura,
-      isDesenho: foundEsp.isDesenho,
-      composicao: foundEsp.composicao,
-      gramatura,
-      pesoEstimadoKg: pesoEstimado,
-      updatedAt: new Date().toISOString()
-    };
+    try {
+      if (editingId) {
+        const updatePayload = {
+          cliente_id: Number(formData.clienteId) || null,
+          especificacao_id: Number(foundEsp.id) || null,
+          titulo_id: Number(foundEsp.fioClienteId) || null,
+          titulo_fio: foundEsp.tituloFio,
+          tipo_fio: foundEsp.tipoFio,
+          total_fios: foundEsp.totalFios,
+          maquina: formData.maquina,
+          urgencia: formData.urgencia,
+          rolete: formData.rolete || '',
+          quantidade_rolos: qtdRolosInformada,
+          quantidade_planejada: qtdRolosInformada,
+          quantidade_pendente: qtdRolosInformada,
+          unidade_producao: isM3M4 ? 'VOLTAS' : 'METROS',
+          metros: isM3M4 ? null : (formData.metros || null),
+          voltas: isM3M4 ? (formData.voltas || null) : null,
+          faca: foundEsp.faca,
+          avanco: isM3M4 ? foundEsp.avanco : 0,
+          pente: foundEsp.pente,
+          abertura: foundEsp.abertura,
+          largura: foundEsp.largura,
+          is_desenho: foundEsp.isDesenho,
+          composicao: foundEsp.composicao,
+          gramatura,
+          peso_estimado: pesoEstimado,
+          status: formData.status || 'PENDENTE',
+          atualizado_em: new Date().toISOString()
+        };
 
-    if (editingId) {
-      updateOP(editingId, {
-        ...commonData,
-        status: formData.status as any
-      });
-      toast.success('OP atualizada com sucesso');
-    } else {
-      const opId = generateId();
-      const opNumber = ops.length > 0 
-        ? Math.max(...ops.map(o => parseInt(o.codigo.replace('OP-', '')) || 0)) + 1 
-        : 1;
-      const codigo = `OP-${opNumber.toString().padStart(4, '0')}`;
+        const { error } = await supabase
+          .from('ordens_producao')
+          .update(updatePayload)
+          .eq('id', Number(editingId));
 
-      const newOP: OP = {
-        ...commonData as any,
-        id: opId,
-        codigo,
-        status: 'PENDENTE',
-        createdAt: new Date().toISOString(),
-      };
+        if (error) throw error;
+        toast.success('OP atualizada com sucesso');
+      } else {
+        const opNumber = ops.length > 0 
+          ? Math.max(...ops.map(o => parseInt(o.codigo.replace('OP-', '')) || 0)) + 1 
+          : 1;
+        const codigo = `OP-${opNumber.toString().padStart(4, '0')}`;
 
-      const rolos: Rolo[] = Array.from({ length: newOP.qtdRolos }).map((_, i) => ({
-        id: generateId(),
-        opId,
-        sequencia: i + 1,
-        numeroRolo: '', // Definido pelo operador
-        status: 'PENDENTE',
-        portadasTotal: 0,
-        pesoEstimadoKg: (newOP.pesoEstimadoKg / newOP.qtdRolos),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        operadores: [],
-        faltaRoleteTempo: 0
-      }));
+        const insertPayload = {
+          codigo,
+          cliente_id: Number(formData.clienteId) || null,
+          especificacao_id: Number(foundEsp.id) || null,
+          titulo_id: Number(foundEsp.fioClienteId) || null,
+          titulo_fio: foundEsp.tituloFio,
+          tipo_fio: foundEsp.tipoFio,
+          total_fios: foundEsp.totalFios,
+          maquina: formData.maquina,
+          urgencia: formData.urgencia,
+          rolete: formData.rolete || '',
+          quantidade_rolos: qtdRolosInformada,
+          quantidade_planejada: qtdRolosInformada,
+          quantidade_produzida: 0,
+          quantidade_pendente: qtdRolosInformada,
+          unidade_producao: isM3M4 ? 'VOLTAS' : 'METROS',
+          metros: isM3M4 ? null : (formData.metros || null),
+          voltas: isM3M4 ? (formData.voltas || null) : null,
+          faca: foundEsp.faca,
+          avanco: isM3M4 ? foundEsp.avanco : 0,
+          pente: foundEsp.pente,
+          abertura: foundEsp.abertura,
+          largura: foundEsp.largura,
+          is_desenho: foundEsp.isDesenho,
+          composicao: foundEsp.composicao,
+          gramatura,
+          peso_estimado: pesoEstimado,
+          status: 'PENDENTE',
+          criado_em: new Date().toISOString(),
+          atualizado_em: new Date().toISOString()
+        };
 
-      addOP(newOP, rolos);
-      toast.success('OP criada com sucesso');
+        const { error } = await supabase
+          .from('ordens_producao')
+          .insert([insertPayload]);
+
+        if (error) throw error;
+        toast.success('Ordem de Produção criada com sucesso.');
+      }
+
+      setIsModalOpen(false);
+      await fetchData();
+    } catch (err: any) {
+      console.error('Erro ao salvar OP:', err);
+      toast.error('Erro ao salvar OP: ' + (err?.message || 'Falha ao salvar'));
     }
-    setIsModalOpen(false);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm('Deseja realmente excluir esta OP e todos os seus registros de produção relacionados? Esta ação é irreversível.')) {
-      deleteOP(id);
-      toast.success('OP excluída com sucesso');
+      try {
+        const { error } = await supabase
+          .from('ordens_producao')
+          .delete()
+          .eq('id', Number(id));
+
+        if (error) throw error;
+        toast.success('OP excluída com sucesso');
+        await fetchData();
+      } catch (err: any) {
+        console.error('Erro ao excluir OP:', err);
+        toast.error('Erro ao excluir OP: ' + (err?.message || 'Falha ao excluir'));
+      }
     }
   };
 
