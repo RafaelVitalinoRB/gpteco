@@ -1,5 +1,6 @@
 {
   "name": "Texlog",
   "description": "Sistema completo para controle de produção de urdimento, com integração entre Programador, Operador, Escritório, Estoque e Financeiro.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

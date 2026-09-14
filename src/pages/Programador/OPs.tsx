@@ -117,6 +117,9 @@ export default function OPs() {
         composicao: o.composicao || [],
         gramatura: Number(o.gramatura) || 0,
         pesoEstimadoKg: Number(o.peso_estimado) || 0,
+        fiosPorPortada: o.fios_por_portada != null ? Number(o.fios_por_portada) : undefined,
+        portadasPrevistas: o.portadas_previstas != null ? Number(o.portadas_previstas) : undefined,
+        observacoesProducao: o.observacoes_producao || '',
         status: (o.status as any) || 'PENDENTE',
         createdAt: o.criado_em || '',
         updatedAt: o.atualizado_em || o.criado_em || ''
@@ -145,7 +148,9 @@ export default function OPs() {
     rolete: '',
     maquina: 'MAQUINA 1',
     urgencia: 'BAIXA',
-    unidadeProducao: 'METROS'
+    unidadeProducao: 'METROS',
+    fiosPorPortada: undefined,
+    observacoesProducao: ''
   });
 
   const [foundEsps, setFoundEsps] = useState<Especificacao[]>([]);
@@ -191,6 +196,31 @@ export default function OPs() {
     }
   }, [formData.maquina]);
 
+  // Cálculos automáticos do Planejamento Operacional
+  const operationalPlanning = useMemo(() => {
+    const totalFios = foundEsp?.totalFios || Number(formData.totalFios) || 0;
+    const fiosPorPortada = Number(formData.fiosPorPortada) || 0;
+    const tituloFio = foundEsp?.tituloFio || formData.tituloFio || '';
+    const tipoFio = foundEsp?.tipoFio || formData.tipoFio || 'POLIESTER';
+    const metros = Number(formData.metros) || 0;
+
+    let portadasPrevistas = 0;
+    if (totalFios > 0 && fiosPorPortada > 0) {
+      portadasPrevistas = Math.ceil(totalFios / fiosPorPortada);
+    }
+
+    let pesoEstimadoPortada = 0;
+    if (fiosPorPortada > 0 && tituloFio && metros > 0) {
+      const gramaturaPortada = calculateGramatura(fiosPorPortada, tituloFio, tipoFio);
+      pesoEstimadoPortada = calculatePesoEstimado(gramaturaPortada, metros);
+    }
+
+    return {
+      portadasPrevistas,
+      pesoEstimadoPortada
+    };
+  }, [foundEsp, formData.totalFios, formData.fiosPorPortada, formData.tituloFio, formData.tipoFio, formData.metros]);
+
   const filteredOPs = ops.filter(op => {
     const cliente = clientes.find(c => c.id.toString() === op.clienteId?.toString());
     const search = searchTerm.toLowerCase();
@@ -216,7 +246,9 @@ export default function OPs() {
         rolete: '',
         maquina: 'MAQUINA 1',
         urgencia: 'BAIXA',
-        unidadeProducao: 'METROS'
+        unidadeProducao: 'METROS',
+        fiosPorPortada: undefined,
+        observacoesProducao: ''
       });
       setFoundEsps([]);
       setSelectedEspId('');
@@ -242,6 +274,7 @@ export default function OPs() {
     if (!formData.maquina) missingFields.push('Máquina');
     if (!formData.qtdRolos || formData.qtdRolos <= 0) missingFields.push('Quantidade de Rolos');
     if (!formData.urgencia) missingFields.push('Urgência');
+    if (!formData.fiosPorPortada || formData.fiosPorPortada <= 0) missingFields.push('Fios por Portada (Gaiola)');
 
     if (isM3M4) {
       if (!formData.voltas || formData.voltas <= 0) missingFields.push('Voltas por Rolo');
@@ -262,6 +295,9 @@ export default function OPs() {
     const gramatura = calculateGramatura(foundEsp.totalFios, foundEsp.tituloFio, foundEsp.tipoFio);
     const pesoEstimado = calculatePesoEstimado(gramatura, formData.metros || 0);
     const qtdRolosInformada = Number(formData.qtdRolos) || 1;
+
+    const fiosPorPortadaNum = Number(formData.fiosPorPortada) || 0;
+    const portadasPrevistasCalc = fiosPorPortadaNum > 0 ? Math.ceil(foundEsp.totalFios / fiosPorPortadaNum) : null;
 
     try {
       if (editingId) {
@@ -290,6 +326,9 @@ export default function OPs() {
           composicao: foundEsp.composicao,
           gramatura,
           peso_estimado: pesoEstimado,
+          fios_por_portada: fiosPorPortadaNum,
+          portadas_previstas: portadasPrevistasCalc,
+          observacoes_producao: formData.observacoesProducao?.trim() || null,
           status: formData.status || 'PENDENTE',
           atualizado_em: new Date().toISOString()
         };
@@ -334,6 +373,9 @@ export default function OPs() {
           composicao: foundEsp.composicao,
           gramatura,
           peso_estimado: pesoEstimado,
+          fios_por_portada: fiosPorPortadaNum,
+          portadas_previstas: portadasPrevistasCalc,
+          observacoes_producao: formData.observacoesProducao?.trim() || null,
           status: 'PENDENTE',
           criado_em: new Date().toISOString(),
           atualizado_em: new Date().toISOString()
@@ -698,6 +740,69 @@ export default function OPs() {
                     placeholder="Identificação do rolete físico"
                     className="w-full bg-black border border-neutral-800 text-white rounded-2xl py-4 px-5 focus:outline-none focus:ring-2 focus:ring-blue-600 font-bold"
                   />
+                </div>
+
+                {/* Seção: Planejamento Operacional */}
+                <div className="md:col-span-2 bg-neutral-950/60 border border-neutral-800/80 rounded-2xl p-6 space-y-6">
+                  <div className="border-b border-neutral-800 pb-3">
+                    <h4 className="text-xs font-black uppercase tracking-[0.2em] text-blue-400 flex items-center gap-2">
+                      <span>⚙️</span> Planejamento Operacional
+                    </h4>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Campo editável: Fios por portada (gaiola) */}
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em] mb-3">
+                        Fios por portada (gaiola) *
+                      </label>
+                      <input 
+                        type="number" 
+                        required
+                        min="1"
+                        value={formData.fiosPorPortada || ''} 
+                        onChange={e => setFormData({...formData, fiosPorPortada: e.target.value ? parseInt(e.target.value) : undefined})}
+                        placeholder="Ex: 480"
+                        className="w-full bg-black border border-neutral-800 text-white rounded-2xl py-4 px-5 focus:outline-none focus:ring-2 focus:ring-blue-600 font-bold"
+                      />
+                    </div>
+
+                    {/* Campo somente leitura: Portadas previstas */}
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em] mb-3">
+                        Portadas previstas (Calculado)
+                      </label>
+                      <div className="w-full bg-neutral-900/80 border border-neutral-800 text-white rounded-2xl py-4 px-5 font-bold font-mono text-emerald-400 flex items-center justify-between">
+                        <span>{operationalPlanning.portadasPrevistas > 0 ? `${operationalPlanning.portadasPrevistas} portadas` : '—'}</span>
+                        <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-sans">Automático</span>
+                      </div>
+                    </div>
+
+                    {/* Campo somente leitura: Peso estimado por portada */}
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em] mb-3">
+                        Peso estimado por portada (Calculado)
+                      </label>
+                      <div className="w-full bg-neutral-900/80 border border-neutral-800 text-white rounded-2xl py-4 px-5 font-bold font-mono text-blue-300 flex items-center justify-between">
+                        <span>{operationalPlanning.pesoEstimadoPortada > 0 ? formatPeso(operationalPlanning.pesoEstimadoPortada) : '—'}</span>
+                        <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-sans">Automático</span>
+                      </div>
+                    </div>
+
+                    {/* Campo editável: Observações de Produção */}
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black text-neutral-500 uppercase tracking-[0.2em] mb-3">
+                        Observações de Produção
+                      </label>
+                      <textarea 
+                        rows={3}
+                        value={formData.observacoesProducao || ''} 
+                        onChange={e => setFormData({...formData, observacoesProducao: e.target.value})}
+                        placeholder="Instruções operacionais para o operador da máquina..."
+                        className="w-full bg-black border border-neutral-800 text-white rounded-2xl py-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium text-sm resize-none"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 

@@ -98,7 +98,12 @@ export interface OP {
   composicao: { fio: string; quantidade: number }[];
   gramatura: number;
   pesoEstimadoKg: number;
-  status: 'PENDENTE' | 'EM_ANDAMENTO' | 'FINALIZADA' | 'PARADA';
+  // Planejamento Operacional
+  fiosPorPortada?: number;
+  portadasPrevistas?: number;
+  observacoesProducao?: string;
+  maquinaPreparacao?: string;
+  status: 'PENDENTE' | 'PREPARANDO' | 'EM_ANDAMENTO' | 'FINALIZADA' | 'PARADA';
   createdAt: string;
   updatedAt: string;
   fim?: string;

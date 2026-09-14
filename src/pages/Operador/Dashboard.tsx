@@ -2,42 +2,35 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
 import { 
   Play, 
-  Pause, 
   CheckCircle2, 
   Package, 
   AlertTriangle, 
-  Plus, 
-  Minus, 
   User, 
   Clock, 
-  Activity, 
   ChevronRight, 
+  ChevronDown,
+  ChevronUp,
   X,
   FileText,
   RotateCw,
   Layers,
   Cpu,
-  BookOpen,
   Info,
   Sliders,
-  Maximize2
+  Check
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn, generateId } from '../../lib/utils';
-import { EventoProducao, Rolo, OP } from '../../types';
 import { supabase } from '../../lib/supabase';
+import { ModalConferencia } from './ModalConferencia';
 
 export default function DashboardOperador() {
   const { 
     user, 
-    ops, 
-    rolos, 
     clientes, 
     operadores, 
-    eventosProducao,
     especificacoes,
     fiosCliente,
-    updateRolo, 
     updateOP, 
     addEventoProducao 
   } = useStore();
@@ -50,39 +43,42 @@ export default function DashboardOperador() {
   );
   const maquina = selectedMachine;
 
-  // Active OP & Rolo Selection
+  // Active OP & Operador Selection
   const [activeOPId, setActiveOPId] = useState<string | null>(null);
-  const [activeRoloId, setActiveRoloId] = useState<string | null>(null);
   const [selectedOperadorId, setSelectedOperadorId] = useState<string>('');
 
   // Operator status: 'PRODUZINDO' | 'PAUSADO' | 'AGUARDANDO_OP'
   const [statusOperacao, setStatusOperacao] = useState<'PRODUZINDO' | 'PAUSADO' | 'AGUARDANDO_OP'>('AGUARDANDO_OP');
 
-  // Portadas do rolo atual (Salvo em memória conforme especificação)
+  // Portadas concluídas do rolo atual (0 até totalPortadas)
   const [portadasAtual, setPortadasAtual] = useState<number>(0);
 
-  // Rolos finalizados localmente em memória caso a OP não tenha registros prévios de rolos
+  // Rolos finalizados localmente em memória para sincronização imediata
   const [rolosFinalizadosMemoria, setRolosFinalizadosMemoria] = useState<Record<string, number>>({});
 
+  // Ficha técnica: expandir informações complementares
+  const [isInfoExpanded, setIsInfoExpanded] = useState<boolean>(false);
+
   // Modais
-  const [isFinalizarModalOpen, setIsFinalizarModalOpen] = useState(false);
-  const [isOcorrenciaModalOpen, setIsOcorrenciaModalOpen] = useState(false);
-  const [isTrocaOperadorModalOpen, setIsTrocaOperadorModalOpen] = useState(false);
-  const [isSelectOPModalOpen, setIsSelectOPModalOpen] = useState(false);
-  const [isSpecModalOpen, setIsSpecModalOpen] = useState(false);
+  const [isFinalizarModalOpen, setIsFinalizarModalOpen] = useState<boolean>(false);
+  const [isOcorrenciaModalOpen, setIsOcorrenciaModalOpen] = useState<boolean>(false);
+  const [isTrocaOperadorModalOpen, setIsTrocaOperadorModalOpen] = useState<boolean>(false);
+  const [isConferenciaModalOpen, setIsConferenciaModalOpen] = useState<boolean>(false);
 
   // Registro de Ciclo e Produção do Rolo Atual
   const [cicloInicioEm, setCicloInicioEm] = useState<string>(new Date().toISOString());
+  const [tempoProducao, setTempoProducao] = useState<string>('00:00:00');
   const [ocorrenciasCicloAtual, setOcorrenciasCicloAtual] = useState<string[]>([]);
 
   // Campos do modal finalizar rolo
   const [modalFinalizarObs, setModalFinalizarObs] = useState<string>('');
 
-  // Lista padronizada de Ocorrências (Sprint Operador 1 - Texlog)
+  // 4. Lista padronizada de Ocorrências (Sprint 2.3.2)
   const TIPOS_OCORRENCIA = [
     'Fio quebrado',
     'Rolete torto/travado',
-    'Voltas a menos/mais',
+    'Voltas a menos',
+    'Voltas a mais',
     'Manutenção máquina',
     'Outros'
   ];
@@ -117,7 +113,7 @@ export default function DashboardOperador() {
     return [clean];
   };
 
-  // Consultar a tabela public.ordens_producao: status = 'PENDENTE' e maquina = máquina atual, ordenando pela mais antiga
+  // Consultar a tabela public.ordens_producao via Supabase
   const fetchOPs = async () => {
     try {
       const machineVariants = getMachineFilterValues(maquina);
@@ -125,8 +121,8 @@ export default function DashboardOperador() {
       let query = supabase
         .from('ordens_producao')
         .select('*, clientes!ordens_producao_cliente_id_fkey(id, nome, razao_social, nome_fantasia)')
-        .eq('status', 'PENDENTE')
-        .in('maquina', machineVariants)
+        .in('status', ['PENDENTE', 'PREPARANDO', 'EM_ANDAMENTO'])
+        .or(`maquina.in.(${machineVariants.map(v => `"${v}"`).join(',')}),maquina_preparacao.in.(${machineVariants.map(v => `"${v}"`).join(',')})`)
         .order('criado_em', { ascending: true });
 
       let { data, error } = await query;
@@ -136,8 +132,7 @@ export default function DashboardOperador() {
         const fallback = await supabase
           .from('ordens_producao')
           .select('*')
-          .eq('status', 'PENDENTE')
-          .in('maquina', machineVariants)
+          .in('status', ['PENDENTE', 'PREPARANDO', 'EM_ANDAMENTO'])
           .order('criado_em', { ascending: true });
 
         if (fallback.error) throw fallback.error;
@@ -158,6 +153,8 @@ export default function DashboardOperador() {
         especificacaoId: o.especificacao_id?.toString() || '',
         especificacao_id: o.especificacao_id,
         maquina: o.maquina || maquina,
+        maquinaPreparacao: o.maquina_preparacao || null,
+        maquina_preparacao: o.maquina_preparacao || null,
         urgencia: o.urgencia || 'BAIXA',
         rolete: o.rolete || '',
         qtdRolos: Number(o.quantidade_planejada ?? o.quantidade_rolos ?? 1),
@@ -178,10 +175,15 @@ export default function DashboardOperador() {
         largura: Number(o.largura) || 0,
         isDesenho: Boolean(o.is_desenho),
         is_desenho: Boolean(o.is_desenho),
+        roloDesenho: o.rolo_desenho || null,
+        rolo_desenho: o.rolo_desenho || null,
         composicao: o.composicao || [],
-        gramatura: Number(o.gramatura) || 0,
-        pesoEstimadoKg: Number(o.peso_estimado) || 0,
-        peso_estimado: Number(o.peso_estimado) || 0,
+        fiosPorPortada: o.fios_por_portada != null ? Number(o.fios_por_portada) : undefined,
+        fios_por_portada: o.fios_por_portada != null ? Number(o.fios_por_portada) : undefined,
+        portadasPrevistas: o.portadas_previstas != null ? Number(o.portadas_previstas) : undefined,
+        portadas_previstas: o.portadas_previstas != null ? Number(o.portadas_previstas) : undefined,
+        observacoesProducao: o.observacoes_producao || '',
+        observacoes_producao: o.observacoes_producao || '',
         status: o.status || 'PENDENTE',
         criado_em: o.criado_em || '',
         createdAt: o.criado_em || '',
@@ -220,7 +222,7 @@ export default function DashboardOperador() {
       });
   }, []);
 
-  // Supabase Realtime: quando houver nova OP para a máquina atual, atualizar sem refresh
+  // Supabase Realtime: quando houver alteração em ordens_producao, atualizar
   useEffect(() => {
     fetchOPs();
 
@@ -244,12 +246,35 @@ export default function DashboardOperador() {
     };
   }, [maquina]);
 
+  // 5. Atualização em tempo real do Tempo de Produção do Rolo Atual
+  useEffect(() => {
+    const updateTimer = () => {
+      if (!cicloInicioEm || statusOperacao === 'AGUARDANDO_OP') {
+        setTempoProducao('00:00:00');
+        return;
+      }
+      const inicioMs = new Date(cicloInicioEm).getTime();
+      const agoraMs = Date.now();
+      const diffSeg = Math.max(0, Math.floor((agoraMs - inicioMs) / 1000));
+      const h = Math.floor(diffSeg / 3600);
+      const m = Math.floor((diffSeg % 3600) / 60);
+      const s = diffSeg % 60;
+      setTempoProducao(
+        `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      );
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [cicloInicioEm, statusOperacao]);
+
   // Operadores autorizados para esta máquina
   const operadoresAtivos = useMemo(() => {
     return operadores.filter(o => o.status === 'ATIVO' && o.maquinasAutorizadas.includes(maquina as any));
   }, [operadores, maquina]);
 
-  // Se nenhum operador selecionado, preenche automaticamente se houver operador logado ou primeiro disponível
+  // Se nenhum operador selecionado, preenche automaticamente
   useEffect(() => {
     if (!selectedOperadorId && operadoresAtivos.length > 0) {
       const loggedUserName = (user as any)?.name || '';
@@ -262,29 +287,33 @@ export default function DashboardOperador() {
     }
   }, [operadoresAtivos, selectedOperadorId, user]);
 
-  // Fechar modal de especificação com tecla ESC
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isSpecModalOpen) {
-        setIsSpecModalOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSpecModalOpen]);
+  // Variações de máquina para filtro
+  const machineVariants = useMemo(() => getMachineFilterValues(maquina), [maquina]);
 
-  // OPs pendentes da máquina atual vindas do Supabase (já ordenadas pela mais antiga)
-  const opsDaMaquina = supabaseOPs;
+  // OPs vinculadas à máquina atual
+  const opsDaMaquina = useMemo(() => {
+    return supabaseOPs.filter(o => {
+      const maqOp = (o.maquina || '').toUpperCase();
+      const maqPrep = (o.maquinaPreparacao || o.maquina_preparacao || '').toUpperCase();
+      return machineVariants.some(v => v.toUpperCase() === maqOp || v.toUpperCase() === maqPrep);
+    });
+  }, [supabaseOPs, machineVariants]);
 
-  // Identificar OP ativa: seleciona a primeira da fila (mais antiga ordenada pelo Supabase) ou pelo activeOPId
+  // Identificar OP Ativa
   const activeOP = useMemo(() => {
     if (activeOPId) {
       const found = opsDaMaquina.find(o => o.id === activeOPId);
       if (found) return found;
     }
-    // Caso padrão: seleciona a primeira da fila (mais antiga)
-    return opsDaMaquina[0] || null;
-  }, [activeOPId, opsDaMaquina]);
+    const emAndamento = opsDaMaquina.find(o => o.status === 'EM_ANDAMENTO' && machineVariants.includes(o.maquina));
+    if (emAndamento) return emAndamento;
+
+    const preparando = opsDaMaquina.find(o => o.status === 'PREPARANDO' && (machineVariants.includes(o.maquina) || machineVariants.includes(o.maquinaPreparacao)));
+    if (preparando) return preparando;
+
+    const pendente = opsDaMaquina.find(o => o.status === 'PENDENTE' && machineVariants.includes(o.maquina));
+    return pendente || null;
+  }, [activeOPId, opsDaMaquina, machineVariants]);
 
   // Sincronizar activeOPId
   useEffect(() => {
@@ -295,98 +324,75 @@ export default function DashboardOperador() {
     }
   }, [activeOP, activeOPId]);
 
-  // Rolo atual
+  // Atualizar status de operação conforme a OP ativa
   useEffect(() => {
     if (!activeOP) {
-      setActiveRoloId(null);
       setStatusOperacao('AGUARDANDO_OP');
       return;
     }
-
-    const rolosDaOP = rolos.filter(r => r.opId === activeOP.id);
-    const roloEmAndamento = rolosDaOP.find(r => r.status === 'EM_ANDAMENTO');
-    const roloParado = rolosDaOP.find(r => r.status === 'PARADO');
-    const roloPendente = rolosDaOP.find(r => r.status === 'PENDENTE');
-
-    if (roloEmAndamento) {
-      setActiveRoloId(roloEmAndamento.id);
-      setPortadasAtual(roloEmAndamento.portadasTotal || 0);
+    if (activeOP.status === 'EM_ANDAMENTO') {
       setStatusOperacao('PRODUZINDO');
-    } else if (roloParado) {
-      setActiveRoloId(roloParado.id);
-      setPortadasAtual(roloParado.portadasTotal || 0);
+    } else if (activeOP.status === 'PREPARANDO') {
       setStatusOperacao('PAUSADO');
-    } else if (roloPendente) {
-      setActiveRoloId(roloPendente.id);
-      setPortadasAtual(roloPendente.portadasTotal || 0);
-      if (activeOP.status === 'EM_ANDAMENTO') {
-        setStatusOperacao('PRODUZINDO');
-      } else {
-        setStatusOperacao('PAUSADO');
-      }
     } else {
-      // OP sem rolos pré-criados (comportamento do Sprint OP 1)
-      if (activeOP.status === 'EM_ANDAMENTO') {
-        setStatusOperacao('PRODUZINDO');
-      } else if (activeOP.status === 'PARADA') {
-        setStatusOperacao('PAUSADO');
-      } else {
-        setStatusOperacao('PAUSADO');
-      }
+      setStatusOperacao('PAUSADO');
     }
-  }, [activeOP, rolos]);
+  }, [activeOP]);
+
+  // Fila completa de OPs da máquina
+  const filaDeProducao = useMemo(() => {
+    return opsDaMaquina.filter(o => o.id !== activeOP?.id);
+  }, [opsDaMaquina, activeOP]);
 
   // Cálculos de Progresso da OP Ativa
-  const { planejado, produzidos, pendentes, percentual } = useMemo(() => {
+  const { planejado, produzidos, pendentes, roloAtualFormatado } = useMemo(() => {
     if (!activeOP) {
-      return { planejado: 0, produzidos: 0, pendentes: 0, percentual: 0 };
+      return { planejado: 1, produzidos: 0, pendentes: 1, roloAtualFormatado: '01 de 01' };
     }
 
-    const qtdPlanejada = Number((activeOP as any).quantidade_planejada || activeOP.qtdRolos || 1);
-    
-    // Total de rolos finalizados no useStore
-    const rolosFinalizadosStore = rolos.filter(r => r.opId === activeOP.id && r.status === 'FINALIZADO').length;
-    // Total de rolos finalizados em memória durante a sessão
+    const qtdPlanejada = Number(activeOP.quantidade_planejada || activeOP.qtdRolos || 1);
     const rolosFinalizadosMem = rolosFinalizadosMemoria[activeOP.id] || 0;
     
     const qtdProduzida = Math.max(
-      Number((activeOP as any).quantidade_produzida || 0),
-      rolosFinalizadosStore + rolosFinalizadosMem
+      Number(activeOP.quantidade_produzida || 0),
+      rolosFinalizadosMem
     );
     const qtdPendente = Math.max(0, qtdPlanejada - qtdProduzida);
-    const pct = qtdPlanejada > 0 ? Math.min(100, Math.round((qtdProduzida / qtdPlanejada) * 100)) : 0;
+    
+    // Rolo atual sendo produzido (Ex.: 03 de 10)
+    const numeroRoloAtual = Math.min(qtdPlanejada, qtdProduzida + 1);
+    const formatado = `${String(numeroRoloAtual).padStart(2, '0')} de ${String(qtdPlanejada).padStart(2, '0')}`;
 
     return {
       planejado: qtdPlanejada,
       produzidos: qtdProduzida,
       pendentes: qtdPendente,
-      percentual: pct
+      roloAtualFormatado: formatado
     };
-  }, [activeOP, rolos, rolosFinalizadosMemoria]);
+  }, [activeOP, rolosFinalizadosMemoria]);
 
-  // Dados do cliente da OP ativa
-  const clienteNome = useMemo(() => {
-    if (!activeOP) return '—';
-    if (activeOP.clientes) {
-      const c = activeOP.clientes;
+  // Helper para obter nome do cliente
+  const getClienteNome = (opItem: any) => {
+    if (!opItem) return '—';
+    if (opItem.clientes) {
+      const c = opItem.clientes;
       const n = c.nome_fantasia || c.nomeFantasia || c.razao_social || c.razaoSocial || c.nome;
       if (n) return n;
     }
-    const cid = (activeOP.cliente_id || activeOP.clienteId)?.toString();
+    const cid = (opItem.cliente_id || opItem.clienteId)?.toString();
     const sc = supabaseClientes.find(c => c.id?.toString() === cid);
-    if (sc) {
-      return sc.nome_fantasia || sc.razao_social || sc.nome || 'Cliente';
-    }
+    if (sc) return sc.nome_fantasia || sc.razao_social || sc.nome || 'Cliente';
     const c = clientes.find(item => item.id.toString() === cid);
-    return c?.nomeFantasia || c?.razaoSocial || (c as any)?.nome || 'Cliente Não Informado';
-  }, [activeOP, supabaseClientes, clientes]);
+    return c?.nomeFantasia || c?.razaoSocial || (c as any)?.nome || 'Cliente';
+  };
 
-  // Operador atual selecionado
+  const clienteNome = useMemo(() => getClienteNome(activeOP), [activeOP, supabaseClientes, clientes]);
+
   const currentOperador = useMemo(() => {
     return operadores.find(o => o.id === selectedOperadorId) || null;
   }, [operadores, selectedOperadorId]);
 
-  // Especificação Técnica completa associada à OP ativa
+  // Especificação Técnica associada à OP ativa
   const activeEspecificacao = useMemo(() => {
     if (!activeOP) return null;
     const espId = (activeOP.especificacao_id || activeOP.especificacaoId)?.toString();
@@ -413,168 +419,135 @@ export default function DashboardOperador() {
     return fiosCliente.find(f => f.tituloFio === titNome) || null;
   }, [activeOP, activeEspecificacao, supabaseTitulos, fiosCliente]);
 
-  // Cor do fio (da OP, do título cadastrado ou padrão)
-  const corFio = useMemo(() => {
-    if (!activeOP) return '—';
-    if ((activeOP as any).cor) return (activeOP as any).cor;
-    if (activeTitulo?.cor) return activeTitulo.cor;
-    return 'Cru / Padrão';
-  }, [activeOP, activeTitulo]);
+  // 3. Total de Portadas conhecido pelo sistema para este rolo
+  const totalPortadas = useMemo(() => {
+    if (!activeOP) return 18;
+    const prev = Number(activeOP.portadas_previstas || activeOP.portadasPrevistas);
+    if (prev > 0) return prev;
+    const tf = Number(activeOP.total_fios || activeOP.totalFios);
+    const fp = Number(activeOP.fios_por_portada || activeOP.fiosPorPortada);
+    if (tf > 0 && fp > 0) return Math.ceil(tf / fp);
+    return 18; // Fallback padronizado caso não informado
+  }, [activeOP]);
 
-  // Código / identificador da especificação
-  const especificacaoCodigo = useMemo(() => {
-    if (!activeOP) return '—';
-    if (activeOP.especificacao_id || activeOP.especificacaoId) {
-      return `ESP-${activeOP.especificacao_id || activeOP.especificacaoId}`;
-    }
-    if (activeEspecificacao?.codigo) return activeEspecificacao.codigo;
-    return `ESP-${activeOP.codigo?.replace('OP-', '') || '001'}`;
+  // Identificação do Rolo Desenho (quando existir)
+  const temRoloDesenho = useMemo(() => {
+    if (!activeOP) return false;
+    return Boolean(
+      activeOP.is_desenho || 
+      activeOP.isDesenho || 
+      activeEspecificacao?.isDesenho || 
+      activeEspecificacao?.is_desenho ||
+      activeOP.rolo_desenho ||
+      activeOP.roloDesenho
+    );
   }, [activeOP, activeEspecificacao]);
 
-  // Observações consolidadas para a Ficha Técnica
-  const observacoesFicha = useMemo(() => {
-    if (!activeOP) return 'Nenhuma observação registrada.';
-    const obsOP = (activeOP as any).observacoes || (activeOP as any).observacao;
+  const valorRoloDesenho = useMemo(() => {
+    if (!activeOP) return null;
+    return activeOP.rolo_desenho || activeOP.roloDesenho || (temRoloDesenho ? 'Desenho Especial' : null);
+  }, [activeOP, temRoloDesenho]);
+
+  // Observações da OP para dados complementares
+  const observacoesComplementares = useMemo(() => {
+    if (!activeOP) return 'Nenhuma observação informada.';
+    const obsOP = activeOP.observacoes_producao || activeOP.observacoesProducao || (activeOP as any).observacoes;
     const obsEsp = activeEspecificacao?.observacoes_tecnicas || (activeEspecificacao as any)?.observacoes;
-    const obsTitulo = activeTitulo?.observacoes || (activeTitulo as any)?.observacao;
-    
     const partes: string[] = [];
     if (obsOP) partes.push(`OP: ${obsOP}`);
     if (obsEsp) partes.push(`Técnica: ${obsEsp}`);
-    if (obsTitulo) partes.push(`Fio: ${obsTitulo}`);
-    
     return partes.length > 0 ? partes.join(' • ') : 'Nenhuma observação informada.';
-  }, [activeOP, activeEspecificacao, activeTitulo]);
+  }, [activeOP, activeEspecificacao]);
 
-  // ================= AÇÕES DO CARD 3: PORTADAS =================
-  const handleIncrementPortada = () => {
-    const nextVal = portadasAtual + 1;
-    setPortadasAtual(nextVal);
+  // =========================================================================
+  // 6. AÇÕES: FINALIZAR PORTADA, REGISTRAR OCORRÊNCIA, FINALIZAR ROLO
+  // =========================================================================
 
-    // Se existe rolo ativo no useStore, mantém sincronizado em memória
-    if (activeRoloId) {
-      const rolo = rolos.find(r => r.id === activeRoloId);
-      if (rolo) {
-        updateRolo(activeRoloId, {
-          portadasTotal: nextVal
-        });
-      }
-    }
-  };
-
-  const handleDecrementPortada = () => {
-    if (portadasAtual <= 0) return;
-    const nextVal = portadasAtual - 1;
-    setPortadasAtual(nextVal);
-
-    // Se existe rolo ativo no useStore, atualiza correção em memória
-    if (activeRoloId) {
-      const rolo = rolos.find(r => r.id === activeRoloId);
-      if (rolo) {
-        updateRolo(activeRoloId, {
-          portadasTotal: nextVal
-        });
-      }
-    }
-  };
-
-  // ================= AÇÕES DO CARD 4: BOTÕES GRANDES =================
-
-  // 1. Iniciar Produção
-  const handleIniciarProducao = () => {
-    if (!activeOP) {
-      toast.error('Nenhuma Ordem de Produção selecionada');
-      return;
-    }
-    if (!selectedOperadorId) {
-      toast.error('Selecione um operador antes de iniciar');
-      setIsTrocaOperadorModalOpen(true);
-      return;
-    }
-
-    const agora = new Date().toISOString();
-    setCicloInicioEm(agora);
-    setOcorrenciasCicloAtual([]);
-    setStatusOperacao('PRODUZINDO');
-
-    // Atualiza status da OP se estiver pendente ou parada
-    if (activeOP.status !== 'EM_ANDAMENTO') {
-      updateOP(activeOP.id, { status: 'EM_ANDAMENTO' });
-    }
-
-    // Se houver rolo no useStore, atualiza status do rolo
-    if (activeRoloId) {
-      updateRolo(activeRoloId, {
-        status: 'EM_ANDAMENTO',
-        iniciadoEm: agora
-      });
-    }
-
-    // Registra evento de início
-    addEventoProducao({
-      id: generateId(),
-      opId: activeOP.id,
-      roloId: activeRoloId || activeOP.id,
-      operadorId: selectedOperadorId,
-      machineCode: maquina as any,
-      tipoEvento: 'INICIO_PRODUCAO',
-      portadasNoEvento: portadasAtual,
-      timestampInicio: agora,
-      createdAt: agora,
-      observacao: `Início de produção da OP ${activeOP.codigo}`
-    });
-
-    toast.success('Produção iniciada!');
-  };
-
-  // 2. Pausar
-  const handlePausarProducao = () => {
+  // AÇÃO 1: FINALIZAR PORTADA (Avança de 🟡 para 🟢 e próxima para 🟡)
+  const handleFinalizarPortada = () => {
     if (!activeOP) return;
 
-    setStatusOperacao('PAUSADO');
+    if (portadasAtual < totalPortadas) {
+      const novaPortada = portadasAtual + 1;
+      setPortadasAtual(novaPortada);
+      toast.success(`Portada ${String(novaPortada).padStart(2, '0')} concluída!`, {
+        icon: '🟢',
+        style: { background: '#10131a', color: '#10b981', border: '1px solid #10b98140' }
+      });
 
-    // Atualiza status da OP
-    updateOP(activeOP.id, { status: 'PARADA' });
-
-    // Se houver rolo no useStore
-    if (activeRoloId) {
-      updateRolo(activeRoloId, {
-        status: 'PARADO',
-        faltaRoleteInicio: new Date().toISOString()
+      if (novaPortada === totalPortadas) {
+        toast('Todas as portadas do rolo foram concluídas! Prossiga para FINALIZAR ROLO.', {
+          icon: '🏁',
+          duration: 4000
+        });
+      }
+    } else {
+      toast('Todas as portadas deste rolo já foram concluídas. Clique em FINALIZAR ROLO.', {
+        icon: 'ℹ️'
       });
     }
+  };
 
-    // Registra evento de pausa
+  // AÇÃO 2: REGISTRAR OCORRÊNCIA (Abre modal para salvar ocorrência vinculada à portada atual)
+  const handleOpenOcorrenciaModal = () => {
+    if (!activeOP) return;
+    setOcorrenciaTipo(TIPOS_OCORRENCIA[0]);
+    setOcorrenciaObs('');
+    setIsOcorrenciaModalOpen(true);
+  };
+
+  // Confirmar Ocorrência (Registra automaticamente a portada atual)
+  const handleConfirmOcorrencia = () => {
+    if (!activeOP) return;
+
+    // 4. Portada atual registrada automaticamente (Ex.: Portada 08 ↓ Rolete torto)
+    const portadaAtualNumero = Math.min(totalPortadas, portadasAtual + 1);
+    const portadaFormatada = `Portada ${String(portadaAtualNumero).padStart(2, '0')}`;
+    
+    const textoFinal = ocorrenciaTipo === 'Outros'
+      ? `${portadaFormatada} - Outros${ocorrenciaObs ? ': ' + ocorrenciaObs.trim() : ''}`
+      : `${portadaFormatada} - ${ocorrenciaTipo}${ocorrenciaObs ? ': ' + ocorrenciaObs.trim() : ''}`;
+
+    setOcorrenciasCicloAtual(prev => [...prev, textoFinal]);
+
     addEventoProducao({
       id: generateId(),
       opId: activeOP.id,
-      roloId: activeRoloId || activeOP.id,
+      roloId: `${activeOP.codigo}-R${produzidos + 1}`,
       operadorId: selectedOperadorId,
       machineCode: maquina as any,
-      tipoEvento: 'PARADA' as any,
+      tipoEvento: 'OCORRENCIA' as any,
       portadasNoEvento: portadasAtual,
       timestampInicio: new Date().toISOString(),
       createdAt: new Date().toISOString(),
-      observacao: `Produção pausada na máquina ${maquina}`
+      observacao: textoFinal
     });
 
-    toast('Produção pausada.', {
-      icon: '⏸',
-      style: { background: '#1c2128', color: '#f59e0b', border: '1px solid #f59e0b40' }
+    toast.success(`Ocorrência salva: ${textoFinal}!`, {
+      icon: '⚠️'
     });
+
+    setIsOcorrenciaModalOpen(false);
+    setOcorrenciaObs('');
   };
 
-  // 3. Finalizar Rolo (Abrir Modal)
+  // AÇÃO 3: FINALIZAR ROLO (Abre modal de confirmação)
   const handleOpenFinalizarModal = () => {
     if (!activeOP) {
-      toast.error('Nenhuma OP ativa para finalizar rolo');
+      toast.error('Nenhuma OP ativa');
       return;
     }
     setModalFinalizarObs('');
     setIsFinalizarModalOpen(true);
   };
 
-  // Confirmar Finalização do Rolo (Sprint Operador 1 - Texlog)
+  // 7. FINALIZAR ROLO - Executar rigorosamente nesta ordem:
+  // 1. Salvar portadas
+  // 2. Salvar ciclo
+  // 3. Salvar ocorrências
+  // 4. Atualizar quantidade produzida da OP
+  // 5. Atualizar quantidade pendente
+  // 6. Alterar status do rolo para AGUARDANDO_PESAGEM
   const handleConfirmFinalizarRolo = async () => {
     if (!activeOP) return;
 
@@ -583,69 +556,50 @@ export default function DashboardOperador() {
     const inicioMs = new Date(horarioInicio).getTime();
     const terminoMs = new Date(horarioTermino).getTime();
     const duracaoSegundos = Math.max(1, Math.round((terminoMs - inicioMs) / 1000));
-    const minutos = Math.floor(duracaoSegundos / 60);
-    const segundos = duracaoSegundos % 60;
-    const tempoProducaoFormatado = minutos > 0 ? `${minutos}min ${segundos}s` : `${segundos}s`;
+    const h = Math.floor(duracaoSegundos / 3600);
+    const m = Math.floor((duracaoSegundos % 3600) / 60);
+    const s = duracaoSegundos % 60;
+    const tempoProducaoFormatado = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 
     const operadorNome = currentOperador?.nome || (user as any)?.name || 'Operador';
 
-    // Compilar todas as ocorrências deste rolo
+    // 1. Salvar portadas
+    const portadasSalvas = portadasAtual;
+
+    // 2. Salvar ciclo & 3. Salvar ocorrências
     const todasOcorrencias = [...ocorrenciasCicloAtual];
     if (modalFinalizarObs.trim()) {
       todasOcorrencias.push(modalFinalizarObs.trim());
     }
     const ocorrenciasTexto = todasOcorrencias.length > 0 ? todasOcorrencias.join('; ') : 'Nenhuma';
 
-    const portadasSalvas = portadasAtual;
+    // 4. Atualizar quantidade produzida da OP
+    const qtdPlanejada = Number(activeOP.quantidade_planejada ?? activeOP.qtdRolos ?? 1);
+    const qtdProduzidaAtual = Number(activeOP.quantidade_produzida ?? produzidos ?? 0);
+    const novaQtdProduzida = qtdProduzidaAtual + 1;
 
-    // Gerar número do rolo automaticamente utilizando a sequência global de rolos
-    const rolosNums = rolos.map(r => {
-      const num = typeof r.numeroRolo === 'number' ? r.numeroRolo : parseInt(String(r.numeroRolo || '').replace(/\D/g, ''), 10);
-      const seq = typeof r.sequencia === 'number' ? r.sequencia : 0;
-      return Math.max(isNaN(num) ? 0 : num, isNaN(seq) ? 0 : seq);
-    });
+    // 5. Atualizar quantidade pendente
+    const novaQtdPendente = Math.max(0, qtdPlanejada - novaQtdProduzida);
+    const isOpConcluida = novaQtdPendente === 0;
+    const novoStatusOP = isOpConcluida ? 'FINALIZADA' : 'EM_ANDAMENTO';
 
-    const eventosNums = eventosProducao
-      .filter(ev => ev.tipoEvento === 'FINALIZAR_ROLO')
-      .map(ev => {
-        const match = (ev.observacao || '').match(/Rolo\s*#?(\d+)/i) || (ev.roloId || '').match(/(\d+)/);
-        return match ? parseInt(match[1], 10) : 0;
-      });
+    const numeroRoloGerado = `${activeOP.codigo}-R${novaQtdProduzida}`;
 
-    const maxGlobal = Math.max(0, ...rolosNums, ...eventosNums);
-    const proximaSequencia = maxGlobal + 1;
-    const numRolo = proximaSequencia.toString();
-
-    // Se há rolo no useStore vinculado à OP
-    if (activeRoloId) {
-      updateRolo(activeRoloId, {
-        status: 'FINALIZADO',
-        finalizadoEm: horarioTermino,
-        iniciadoEm: horarioInicio,
-        numeroRolo: numRolo,
-        sequencia: proximaSequencia,
-        portadasTotal: portadasSalvas
-      });
+    // 6. Alterar status do rolo para AGUARDANDO_PESAGEM no Supabase
+    try {
+      await supabase.from('rolos').insert([{
+        op_id: Number(activeOP.id) || null,
+        numero_rolo: numeroRoloGerado,
+        status: 'AGUARDANDO_PESAGEM',
+        portadas_total: portadasSalvas,
+        finalizado_em: horarioTermino,
+        sequencia: novaQtdProduzida
+      }]);
+    } catch (errRolo) {
+      console.warn('Erro ao inserir rolo no Supabase:', errRolo);
     }
 
-    // Salvar evento com os campos exatos exigidos:
-    // portadas totais, ocorrências, operador, máquina, horário de início, horário de término, tempo de produção
-    addEventoProducao({
-      id: generateId(),
-      opId: activeOP.id,
-      roloId: activeRoloId || `ROLO-${numRolo}`,
-      operadorId: selectedOperadorId,
-      machineCode: maquina as any,
-      tipoEvento: 'FINALIZAR_ROLO',
-      portadasNoEvento: portadasSalvas,
-      timestampInicio: horarioInicio,
-      timestampFim: horarioTermino,
-      duracaoSegundos,
-      observacao: `Rolo #${numRolo} finalizado • Portadas: ${portadasSalvas} | Ocorrências: ${ocorrenciasTexto} | Operador: ${operadorNome} | Máquina: ${maquina} | Início: ${formatHora(horarioInicio)} | Término: ${formatHora(horarioTermino)} | Tempo: ${tempoProducaoFormatado}`,
-      createdAt: horarioTermino
-    });
-
-    // Tentar persistir na tabela producao_operador no Supabase caso exista
+    // Salvar ciclo em producao_operador se existir
     try {
       await supabase.from('producao_operador').insert([{
         op_id: Number(activeOP.id) || null,
@@ -664,21 +618,7 @@ export default function DashboardOperador() {
       // Ignora se tabela não existir
     }
 
-    // Atualiza contador em memória
-    setRolosFinalizadosMemoria(prev => ({
-      ...prev,
-      [activeOP.id]: (prev[activeOP.id] || 0) + 1
-    }));
-
-    // Atualizar automaticamente a OP (quantidade_produzida +1 e quantidade_pendente -1)
-    const qtdPlanejada = Number(activeOP.quantidade_planejada ?? activeOP.qtdRolos ?? 1);
-    const qtdProduzidaAtual = Number(activeOP.quantidade_produzida ?? produzidos ?? 0);
-    const novaQtdProduzida = qtdProduzidaAtual + 1;
-    const novaQtdPendente = Math.max(0, qtdPlanejada - novaQtdProduzida);
-    const isOpConcluida = novaQtdPendente === 0;
-    const novoStatusOP = isOpConcluida ? 'FINALIZADA' : 'EM_ANDAMENTO';
-
-    // Atualizar no Supabase ordens_producao
+    // Atualizar quantidade produzida, pendente e status da OP no Supabase
     try {
       await supabase
         .from('ordens_producao')
@@ -690,11 +630,32 @@ export default function DashboardOperador() {
           ...(isOpConcluida ? { fim: horarioTermino } : {})
         })
         .eq('id', Number(activeOP.id));
-    } catch (err) {
-      console.warn('Erro ao atualizar ordens_producao no Supabase:', err);
+    } catch (errOP) {
+      console.warn('Erro ao atualizar ordens_producao no Supabase:', errOP);
     }
 
-    // Atualizar no useStore
+    // Registrar Evento de Produção
+    addEventoProducao({
+      id: generateId(),
+      opId: activeOP.id,
+      roloId: numeroRoloGerado,
+      operadorId: selectedOperadorId,
+      machineCode: maquina as any,
+      tipoEvento: 'FINALIZAR_ROLO',
+      portadasNoEvento: portadasSalvas,
+      timestampInicio: horarioInicio,
+      timestampFim: horarioTermino,
+      duracaoSegundos,
+      observacao: `Rolo #${numeroRoloGerado} finalizado • Portadas: ${portadasSalvas} | Ocorrências: ${ocorrenciasTexto} | Tempo: ${tempoProducaoFormatado}`,
+      createdAt: horarioTermino
+    });
+
+    // Atualizar store local
+    setRolosFinalizadosMemoria(prev => ({
+      ...prev,
+      [activeOP.id]: novaQtdProduzida
+    }));
+
     updateOP(activeOP.id, {
       quantidade_produzida: novaQtdProduzida,
       quantidade_pendente: novaQtdPendente,
@@ -702,7 +663,6 @@ export default function DashboardOperador() {
       ...(isOpConcluida ? { fim: horarioTermino } : {})
     } as any);
 
-    // Atualizar estado local de OPs para sincronização imediata
     setSupabaseOPs(prev => prev.map(o => {
       if (o.id === activeOP.id) {
         return {
@@ -715,154 +675,88 @@ export default function DashboardOperador() {
       return o;
     }));
 
-    // Fechar modal de finalização e limpar campos
-    setModalFinalizarObs('');
     setIsFinalizarModalOpen(false);
+    setModalFinalizarObs('');
 
-    // Se ainda existirem rolos pendentes na OP, iniciar automaticamente o próximo ciclo de produção, sem retornar para a tela inicial
+    // =======================================================================
+    // 8. PRÓXIMO ROLO: Se existir rolo pendente na mesma OP, abrir automaticamente!
+    // =======================================================================
     if (!isOpConcluida) {
       const novoCicloInicio = new Date().toISOString();
       setCicloInicioEm(novoCicloInicio);
       setPortadasAtual(0);
       setOcorrenciasCicloAtual([]);
       setStatusOperacao('PRODUZINDO');
-
-      // Buscar próximo rolo se houver na store
-      const rolosPendentes = rolos.filter(r => r.opId === activeOP.id && r.status === 'PENDENTE');
-      if (rolosPendentes.length > 0) {
-        const nextRolo = rolosPendentes[0];
-        setActiveRoloId(nextRolo.id);
-        updateRolo(nextRolo.id, {
-          status: 'EM_ANDAMENTO',
-          iniciadoEm: novoCicloInicio
-        });
-      }
-
-      // Registrar evento de início automático do próximo ciclo
-      addEventoProducao({
-        id: generateId(),
-        opId: activeOP.id,
-        roloId: rolosPendentes[0]?.id || activeOP.id,
-        operadorId: selectedOperadorId,
-        machineCode: maquina as any,
-        tipoEvento: 'INICIO_PRODUCAO',
-        portadasNoEvento: 0,
-        timestampInicio: novoCicloInicio,
-        createdAt: novoCicloInicio,
-        observacao: `Próximo ciclo iniciado automaticamente • Rolo ${novaQtdProduzida + 1} de ${qtdPlanejada}`
-      });
-
-      toast.success(`Rolo #${numRolo} finalizado! Próximo rolo (${novaQtdProduzida + 1}/${qtdPlanejada}) iniciado automaticamente.`);
-    } else {
+      toast.success(
+        `Rolo ${String(novaQtdProduzida).padStart(2, '0')} finalizado com sucesso! Rolo ${String(novaQtdProduzida + 1).padStart(2, '0')} de ${String(qtdPlanejada).padStart(2, '0')} iniciado.`,
+        { icon: '🚀', duration: 4000 }
+      );
+    } 
+    // =======================================================================
+    // 9. ÚLTIMO ROLO: Atualizar OP para CONCLUÍDA e retornar à lista de OPs
+    // =======================================================================
+    else {
       setPortadasAtual(0);
       setOcorrenciasCicloAtual([]);
       setStatusOperacao('AGUARDANDO_OP');
-      toast.success('Todos os rolos foram produzidos! Ordem de Produção finalizada.');
+      setActiveOPId(null);
+      toast.success(
+        'Todos os rolos foram produzidos! Ordem de Produção CONCLUÍDA.',
+        { icon: '🎉', duration: 5000 }
+      );
+      fetchOPs();
     }
   };
 
-  // 4. Solicitar Rolete
-  const handleSolicitarRolete = () => {
-    if (!activeOP) {
-      toast.error('Nenhuma OP em andamento');
-      return;
-    }
-
-    addEventoProducao({
-      id: generateId(),
-      opId: activeOP.id,
-      roloId: activeRoloId || activeOP.id,
-      operadorId: selectedOperadorId,
-      machineCode: maquina as any,
-      tipoEvento: 'FALTA_ROLETE',
-      portadasNoEvento: portadasAtual,
-      timestampInicio: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      observacao: `Rolete solicitado: ${activeOP.rolete || 'Padrão'}`
-    });
-
-    toast.success(`Rolete solicitado: ${activeOP.rolete || 'Padrão'}!`, {
-      icon: '📦',
-      style: { background: '#181c24', color: '#a855f7', border: '1px solid #a855f740' }
-    });
-  };
-
-  // 5. Ocorrência (Confirmar)
-  const handleConfirmOcorrencia = () => {
+  // Iniciar Produção da OP (abre conferência antes de começar)
+  const handleConfirmarInicioConferencia = async () => {
     if (!activeOP) return;
+    setIsConferenciaModalOpen(false);
 
-    const textoFinal = ocorrenciaTipo === 'Outros'
-      ? (ocorrenciaObs ? `Outros: ${ocorrenciaObs.trim()}` : 'Outros')
-      : `${ocorrenciaTipo}${ocorrenciaObs ? ': ' + ocorrenciaObs.trim() : ''}`;
+    const agora = new Date().toISOString();
+    setCicloInicioEm(agora);
+    setPortadasAtual(0);
+    setOcorrenciasCicloAtual([]);
+    setStatusOperacao('PRODUZINDO');
 
-    // Registrar na lista de ocorrências do ciclo atual
-    setOcorrenciasCicloAtual(prev => [...prev, textoFinal]);
+    try {
+      await supabase
+        .from('ordens_producao')
+        .update({ 
+          status: 'EM_ANDAMENTO',
+          inicio: agora,
+          atualizado_em: agora
+        })
+        .eq('id', Number(activeOP.id));
+    } catch (e) {
+      console.warn('Erro ao atualizar início da OP no Supabase:', e);
+    }
+
+    updateOP(activeOP.id, { status: 'EM_ANDAMENTO', inicio: agora } as any);
 
     addEventoProducao({
       id: generateId(),
       opId: activeOP.id,
-      roloId: activeRoloId || activeOP.id,
+      roloId: `${activeOP.codigo}-R${produzidos + 1}`,
       operadorId: selectedOperadorId,
       machineCode: maquina as any,
-      tipoEvento: 'OCORRENCIA' as any,
-      portadasNoEvento: portadasAtual,
-      timestampInicio: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      observacao: textoFinal
+      tipoEvento: 'INICIO_PRODUCAO',
+      portadasNoEvento: 0,
+      timestampInicio: agora,
+      createdAt: agora,
+      observacao: `Início de produção da OP ${activeOP.codigo} com conferência realizada`
     });
 
-    toast.success('Ocorrência registrada com sucesso!', {
-      icon: '📝'
-    });
-    setIsOcorrenciaModalOpen(false);
-    setOcorrenciaObs('');
-  };
-
-  // ================= CARD 5: ÚLTIMOS EVENTOS =================
-  const ultimosEventos = useMemo(() => {
-    return eventosProducao
-      .filter(e => e.machineCode === maquina || (activeOP && e.opId === activeOP.id))
-      .sort((a, b) => new Date(b.createdAt || b.timestampInicio).getTime() - new Date(a.createdAt || a.timestampInicio).getTime())
-      .slice(0, 5);
-  }, [eventosProducao, maquina, activeOP]);
-
-  // Formatação de hora amigável
-  const formatHora = (isoStr?: string) => {
-    if (!isoStr) return '--:--';
-    try {
-      const d = new Date(isoStr);
-      return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch {
-      return '--:--';
-    }
-  };
-
-  const getTipoEventoLabel = (tipo: string) => {
-    switch (tipo) {
-      case 'INICIO_PRODUCAO':
-        return { label: 'Início de Produção', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' };
-      case 'FINALIZAR_ROLO':
-        return { label: 'Rolo Finalizado', color: 'text-blue-400 bg-blue-500/10 border-blue-500/20' };
-      case 'PARADA':
-        return { label: 'Pausa de Produção', color: 'text-amber-400 bg-amber-500/10 border-amber-500/20' };
-      case 'FALTA_ROLETE':
-        return { label: 'Rolete Solicitado', color: 'text-purple-400 bg-purple-500/10 border-purple-500/20' };
-      case 'OCORRENCIA':
-        return { label: 'Ocorrência', color: 'text-rose-400 bg-rose-500/10 border-rose-500/20' };
-      case 'TROCA_OPERADOR':
-        return { label: 'Troca de Operador', color: 'text-neutral-300 bg-white/10 border-white/20' };
-      default:
-        return { label: tipo.replace('_', ' '), color: 'text-neutral-400 bg-white/5 border-white/10' };
-    }
+    toast.success('Produção iniciada com sucesso!');
   };
 
   return (
     <div className="min-h-screen bg-[#0a0c10] text-neutral-100 font-sans pb-16 selection:bg-blue-600 selection:text-white">
       {/* ============================================================== */}
-      {/* TOPO: TÍTULO, OPERADOR, NOME DA MÁQUINA, STATUS                */}
+      {/* CABEÇALHO DO TABLET                                            */}
       {/* ============================================================== */}
       <header className="sticky top-0 z-30 bg-[#10131a]/95 backdrop-blur-md border-b border-white/10 px-4 py-3 sm:px-6 shadow-xl">
-        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
           {/* Título & Máquina */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center font-black text-blue-400 text-xl tracking-wider shadow-inner">
@@ -872,7 +766,7 @@ export default function DashboardOperador() {
               <div className="flex items-center gap-2">
                 <span className="font-black text-xl tracking-tight text-white uppercase">TEXLOG</span>
                 <span className="text-neutral-500 text-xs font-semibold">|</span>
-                <span className="text-xs font-bold uppercase tracking-widest text-neutral-400">Operador</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-neutral-400">Operador V2</span>
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Cpu className="w-3.5 h-3.5 text-blue-400" />
@@ -885,7 +779,7 @@ export default function DashboardOperador() {
 
           {/* Operador & Status */}
           <div className="flex items-center gap-3">
-            {/* Operador badge clicável para troca rápida */}
+            {/* Operador badge clicável */}
             <button
               onClick={() => setIsTrocaOperadorModalOpen(true)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-colors text-left"
@@ -928,407 +822,555 @@ export default function DashboardOperador() {
         </div>
       </header>
 
-      {/* Conteúdo Principal */}
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {/* ============================================================== */}
+      {/* CONTEÚDO PRINCIPAL (SPRINT 2.3.2)                              */}
+      {/* ============================================================== */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* ============================================================== */}
-        {/* CARD 1: ORDEM DE PRODUÇÃO (APENAS OS DADOS SOLICITADOS)         */}
-        {/* ============================================================== */}
-        <section className="bg-[#12161f] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden">
-          <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
-            <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-blue-400" />
-              <h2 className="text-xs font-black uppercase tracking-widest text-neutral-400">
-                Ordem de Produção {activeOP ? `• ${activeOP.codigo}` : ''}
-              </h2>
-            </div>
-            <div className="flex items-center gap-2">
-              {activeOP && (
-                <button
-                  onClick={() => setIsSpecModalOpen(true)}
-                  className="text-xs font-bold text-blue-300 hover:text-white flex items-center gap-1.5 bg-blue-600/20 hover:bg-blue-600/30 px-3 py-1.5 rounded-xl border border-blue-500/30 transition-all shadow-sm"
-                  title="Abrir Especificação Completa da OP"
-                >
-                  <BookOpen className="w-3.5 h-3.5 text-blue-400" />
-                  <span>📖 Ver Especificação Completa</span>
-                </button>
-              )}
-              {opsDaMaquina.length > 1 && (
-                <button
-                  onClick={() => setIsSelectOPModalOpen(true)}
-                  className="text-[11px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 bg-blue-500/10 px-2.5 py-1.5 rounded-xl border border-blue-500/20"
-                >
-                  Fila ({opsDaMaquina.length})
-                  <ChevronRight className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          </div>
+        {activeOP ? (
+          <>
+            {/* ========================================================== */}
+            {/* 2. FICHA TÉCNICA (SEMPRE VISÍVEL, SEM MODAL)               */}
+            {/* ========================================================== */}
+            <section className="bg-[#12161f] border border-white/10 rounded-3xl p-5 sm:p-6 shadow-xl relative overflow-hidden space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                  <h2 className="text-sm font-black uppercase tracking-widest text-white flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-400" />
+                    Ficha Técnica
+                  </h2>
+                </div>
 
-          {activeOP ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {/* Cliente */}
-              <div className="col-span-2 bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                  Cliente
-                </span>
-                <span className="text-base sm:text-lg font-black text-white tracking-tight block truncate">
-                  {clienteNome}
-                </span>
-              </div>
-
-              {/* Título */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                  Título
-                </span>
-                <span className="text-base sm:text-lg font-black text-white tracking-tight block truncate font-mono">
-                  {activeOP.titulo_fio || activeOP.tituloFio || '—'}
-                </span>
-              </div>
-
-              {/* Total de fios */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                  Total de Fios
-                </span>
-                <span className="text-base sm:text-lg font-black text-blue-400 tracking-tight block font-mono">
-                  {(activeOP.total_fios ?? activeOP.totalFios)?.toLocaleString('pt-BR') || '—'}
-                </span>
-              </div>
-
-              {/* Máquina */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                  Máquina
-                </span>
-                <span className="text-base sm:text-lg font-black text-neutral-200 tracking-tight block font-mono">
-                  {activeOP.maquina || maquina}
-                </span>
-              </div>
-
-              {/* Quantidade Planejada */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                  Qtd. Planejada
-                </span>
-                <span className="text-base sm:text-lg font-black text-white tracking-tight block font-mono">
-                  {planejado} <span className="text-xs font-semibold text-neutral-500">rolos</span>
-                </span>
-              </div>
-
-              {/* Produzidos */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500 block mb-1">
-                  Produzidos
-                </span>
-                <span className="text-base sm:text-lg font-black text-emerald-400 tracking-tight block font-mono">
-                  {produzidos} <span className="text-xs font-semibold text-neutral-500">rolos</span>
-                </span>
-              </div>
-
-              {/* Pendentes */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 block mb-1">
-                  Pendentes
-                </span>
-                <span className="text-base sm:text-lg font-black text-amber-400 tracking-tight block font-mono">
-                  {pendentes} <span className="text-xs font-semibold text-neutral-500">rolos</span>
-                </span>
-              </div>
-
-              {/* Urgência */}
-              <div className="col-span-2 sm:col-span-4 flex items-center justify-between bg-black/20 rounded-xl p-3 border border-white/5">
-                <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">
-                  Nível de Urgência
-                </span>
-                <span className={cn(
-                  "px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider font-mono border",
-                  activeOP.urgencia === 'ALTA' && "bg-red-500/20 text-red-400 border-red-500/30",
-                  activeOP.urgencia === 'MEDIA' && "bg-amber-500/20 text-amber-400 border-amber-500/30",
-                  activeOP.urgencia === 'BAIXA' && "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                )}>
-                  {activeOP.urgencia || 'NORMAL'}
-                </span>
-              </div>
-
-              {/* Botão Ficha Técnica Completa */}
-              <div className="col-span-2 sm:col-span-4 pt-1">
+                {/* Botão Único: Expandir informações */}
                 <button
                   type="button"
-                  onClick={() => setIsSpecModalOpen(true)}
-                  className="w-full py-3 px-4 rounded-xl bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 hover:border-blue-400/50 text-blue-300 hover:text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 transition-all shadow-sm active:scale-[0.99]"
+                  onClick={() => setIsInfoExpanded(prev => !prev)}
+                  className="text-xs font-bold text-blue-300 hover:text-white flex items-center gap-1.5 bg-blue-600/20 hover:bg-blue-600/30 px-3.5 py-2 rounded-xl border border-blue-500/30 transition-all shadow-sm active:scale-95"
                 >
-                  <BookOpen className="w-4 h-4 text-blue-400" />
-                  <span>📖 Ver Especificação Completa</span>
+                  {isInfoExpanded ? (
+                    <>
+                      <ChevronUp className="w-4 h-4 text-blue-400" />
+                      <span>Recolher informações</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4 text-blue-400" />
+                      <span>Expandir informações</span>
+                    </>
+                  )}
                 </button>
               </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-neutral-500">
-              <Clock className="w-10 h-10 mx-auto mb-2 text-neutral-600" />
-              <p className="text-sm font-bold uppercase tracking-wider">Nenhuma Ordem de Produção disponível.</p>
-              <p className="text-xs text-neutral-600 mt-1">Aguardando programação de nova ordem de produção.</p>
-            </div>
-          )}
-        </section>
 
-        {/* ============================================================== */}
-        {/* CARD 2: PROGRESSO                                              */}
-        {/* ============================================================== */}
-        <section className="bg-[#12161f] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl">
-          <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
-            <h2 className="text-xs font-black uppercase tracking-widest text-neutral-400 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-emerald-400" />
-              Progresso
-            </h2>
-            <span className="text-xs font-black font-mono text-emerald-400">
-              {percentual}% Concluído
-            </span>
-          </div>
+              {/* Cabeçalho Primário da Ficha Técnica: Cliente, OP, Máquina, Rolo Atual */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Cliente
+                  </span>
+                  <span className="text-base sm:text-lg font-black text-white truncate block">
+                    {clienteNome}
+                  </span>
+                </div>
 
-          {/* Barra de Progresso Horizontal */}
-          <div className="w-full bg-black/50 border border-white/10 rounded-xl h-7 p-1 overflow-hidden relative mb-4">
-            <div 
-              className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-lg transition-all duration-500 shadow-[0_0_12px_rgba(16,185,129,0.3)]"
-              style={{ width: `${percentual}%` }}
-            />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="text-[11px] font-black text-white drop-shadow-md tracking-wider font-mono">
-                {produzidos} de {planejado} rolos ({percentual}%)
-              </span>
-            </div>
-          </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    OP
+                  </span>
+                  <span className="text-base sm:text-lg font-black text-blue-400 font-mono block">
+                    {activeOP.codigo}
+                  </span>
+                </div>
 
-          {/* Métricas: Planejado, Produzido, Pendente */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-black/30 rounded-xl p-3 text-center border border-white/5">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 block mb-1">
-                Planejado
-              </span>
-              <span className="text-xl sm:text-2xl font-black text-white font-mono leading-none">
-                {planejado}
-              </span>
-            </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Máquina
+                  </span>
+                  <span className="text-base sm:text-lg font-black text-white font-mono block">
+                    {maquina}
+                  </span>
+                </div>
 
-            <div className="bg-emerald-950/20 rounded-xl p-3 text-center border border-emerald-500/20">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 block mb-1">
-                Produzido
-              </span>
-              <span className="text-xl sm:text-2xl font-black text-emerald-300 font-mono leading-none">
-                {produzidos}
-              </span>
-            </div>
-
-            <div className="bg-amber-950/20 rounded-xl p-3 text-center border border-amber-500/20">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-1">
-                Pendente
-              </span>
-              <span className="text-xl sm:text-2xl font-black text-amber-300 font-mono leading-none">
-                {pendentes}
-              </span>
-            </div>
-          </div>
-        </section>
-
-        {/* ============================================================== */}
-        {/* CARD 3: PORTADAS (ROLO ATUAL, BOTÃO +, BOTÃO -)                */}
-        {/* ============================================================== */}
-        <section className="bg-[#12161f] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl">
-          <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-2">
-            <div className="flex items-center gap-2">
-              <RotateCw className="w-4 h-4 text-blue-400" />
-              <h2 className="text-xs font-black uppercase tracking-widest text-neutral-400">
-                Portadas do Rolo Atual
-              </h2>
-            </div>
-            <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
-              Controle em Memória
-            </span>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 bg-black/40 rounded-2xl p-6 border border-white/5">
-            {/* Display Numérico Gigante */}
-            <div className="flex flex-col items-center sm:items-start">
-              <span className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-1">
-                Contagem Atual
-              </span>
-              <div className="text-6xl sm:text-7xl font-black text-white font-mono tracking-tighter drop-shadow-md">
-                {portadasAtual}
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block mb-0.5">
+                    Rolo Atual
+                  </span>
+                  <span className="text-base sm:text-lg font-black text-amber-300 font-mono block">
+                    {roloAtualFormatado}
+                  </span>
+                </div>
               </div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-600 mt-1">
-                Portadas registradas neste rolo
-              </span>
-            </div>
 
-            {/* Controles de Touchscreen */}
-            <div className="flex items-center gap-4 w-full sm:w-auto justify-center">
-              {/* Botão Pequeno: - (Correção rápida) */}
-              <button
-                onClick={handleDecrementPortada}
-                disabled={portadasAtual <= 0}
-                className={cn(
-                  "w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-900 border border-white/10 flex items-center justify-center text-neutral-300 text-3xl font-black shadow-lg transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed",
-                  "focus:outline-none focus:ring-2 focus:ring-neutral-500"
-                )}
-                title="Corrigir portada (-1)"
-              >
-                <Minus className="w-8 h-8" />
-              </button>
+              {/* Fita Completa dos Parâmetros Técnicos Exigidos */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 lg:grid-cols-10 gap-2.5">
+                {/* Título */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Título
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white font-mono truncate block" title={activeOP.titulo_fio || activeOP.tituloFio || activeTitulo?.codigo}>
+                    {activeOP.titulo_fio || activeOP.tituloFio || activeTitulo?.codigo || '—'}
+                  </span>
+                </div>
 
-              {/* Botão Grande: + (Registro de portada principal) */}
-              <button
-                onClick={handleIncrementPortada}
-                className={cn(
-                  "flex-1 sm:flex-none sm:w-48 h-20 sm:h-24 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 active:from-blue-700 active:to-blue-600 text-white flex items-center justify-center gap-3 text-4xl font-black shadow-xl shadow-blue-900/30 transition-all active:scale-[0.98] border border-blue-400/30",
-                  "focus:outline-none focus:ring-4 focus:ring-blue-500/50"
-                )}
-                title="Registrar portada (+1)"
-              >
-                <Plus className="w-10 h-10 stroke-[3]" />
-                <span className="text-xl sm:text-2xl tracking-wider uppercase font-black">Portada</span>
-              </button>
-            </div>
-          </div>
-        </section>
+                {/* Tipo do Fio */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Tipo do Fio
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white truncate block">
+                    {activeOP.tipo_fio || activeOP.tipoFio || activeTitulo?.tipo_fio || '—'}
+                  </span>
+                </div>
 
-        {/* ============================================================== */}
-        {/* CARD 4: AÇÕES (BOTÕES GRANDES OCUPANDO TODA LARGURA)           */}
-        {/* ============================================================== */}
-        <section className="bg-[#12161f] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl">
-          <h2 className="text-xs font-black uppercase tracking-widest text-neutral-400 mb-4 border-b border-white/5 pb-2">
-            Ações Principais
-          </h2>
+                {/* Total de Fios */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Total Fios
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-blue-400 font-mono block">
+                    {(activeOP.total_fios ?? activeOP.totalFios)?.toLocaleString('pt-BR') || '—'}
+                  </span>
+                </div>
 
-          <div className="flex flex-col gap-3.5">
-            {/* ▶ Iniciar Produção */}
-            <button
-              onClick={handleIniciarProducao}
-              disabled={statusOperacao === 'PRODUZINDO' || !activeOP}
-              className={cn(
-                "w-full h-16 sm:h-18 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-lg sm:text-xl uppercase tracking-wider flex items-center justify-center gap-3 shadow-lg shadow-emerald-900/30 transition-all active:scale-[0.99] border border-emerald-400/30",
-                (statusOperacao === 'PRODUZINDO' || !activeOP) && "opacity-40 grayscale cursor-not-allowed shadow-none"
-              )}
-            >
-              <Play className="w-6 h-6 fill-current" />
-              <span>Iniciar Produção</span>
-            </button>
+                {/* Pente */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Pente
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white font-mono block">
+                    {activeOP.pente || activeEspecificacao?.pente || '—'}
+                  </span>
+                </div>
 
-            {/* ⏸ Pausar */}
-            <button
-              onClick={handlePausarProducao}
-              disabled={statusOperacao === 'PAUSADO' || !activeOP}
-              className={cn(
-                "w-full h-16 sm:h-18 rounded-2xl bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white font-black text-lg sm:text-xl uppercase tracking-wider flex items-center justify-center gap-3 shadow-lg shadow-amber-900/30 transition-all active:scale-[0.99] border border-amber-400/30",
-                (statusOperacao === 'PAUSADO' || !activeOP) && "opacity-40 grayscale cursor-not-allowed shadow-none"
-              )}
-            >
-              <Pause className="w-6 h-6 fill-current" />
-              <span>Pausar</span>
-            </button>
+                {/* Faca */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Faca
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white font-mono block">
+                    {activeOP.faca || activeEspecificacao?.faca || '—'}
+                  </span>
+                </div>
 
-            {/* ✅ Finalizar Rolo */}
-            <button
-              onClick={handleOpenFinalizarModal}
-              disabled={!activeOP}
-              className={cn(
-                "w-full h-16 sm:h-18 rounded-2xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-black text-lg sm:text-xl uppercase tracking-wider flex items-center justify-center gap-3 shadow-lg shadow-blue-900/30 transition-all active:scale-[0.99] border border-blue-400/30",
-                !activeOP && "opacity-40 grayscale cursor-not-allowed shadow-none"
-              )}
-            >
-              <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
-              <span>Finalizar Rolo</span>
-            </button>
+                {/* Avanço */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Avanço
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white font-mono block">
+                    {activeOP.avanco || activeEspecificacao?.avanco || '—'}
+                  </span>
+                </div>
 
-            {/* 📦 Solicitar Rolete */}
-            <button
-              onClick={handleSolicitarRolete}
-              disabled={!activeOP}
-              className={cn(
-                "w-full h-16 sm:h-18 rounded-2xl bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white font-black text-lg sm:text-xl uppercase tracking-wider flex items-center justify-center gap-3 shadow-lg shadow-purple-900/30 transition-all active:scale-[0.99] border border-purple-400/30",
-                !activeOP && "opacity-40 grayscale cursor-not-allowed shadow-none"
-              )}
-            >
-              <Package className="w-6 h-6 stroke-[2.5]" />
-              <span>Solicitar Rolete</span>
-            </button>
+                {/* Abertura */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Abertura
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white font-mono block">
+                    {activeOP.abertura || activeEspecificacao?.abertura || '—'}
+                  </span>
+                </div>
 
-            {/* 📝 Ocorrência */}
-            <button
-              onClick={() => setIsOcorrenciaModalOpen(true)}
-              className="w-full h-16 sm:h-18 rounded-2xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-black text-lg sm:text-xl uppercase tracking-wider flex items-center justify-center gap-3 shadow-lg shadow-rose-900/30 transition-all active:scale-[0.99] border border-rose-400/30"
-            >
-              <AlertTriangle className="w-6 h-6 stroke-[2.5]" />
-              <span>Ocorrência</span>
-            </button>
-          </div>
-        </section>
+                {/* Rolete */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Rolete
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-amber-300 font-mono truncate block" title={activeOP.rolete || activeEspecificacao?.rolete}>
+                    {activeOP.rolete || activeEspecificacao?.rolete || '—'}
+                  </span>
+                </div>
 
-        {/* ============================================================== */}
-        {/* CARD 5: ÚLTIMOS EVENTOS                                        */}
-        {/* ============================================================== */}
-        <section className="bg-[#12161f] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl">
-          <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-2">
-            <h2 className="text-xs font-black uppercase tracking-widest text-neutral-400 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-blue-400" />
-              Últimos Eventos
-            </h2>
-            <span className="text-[11px] font-semibold text-neutral-500">
-              Histórico da Máquina
-            </span>
-          </div>
+                {/* Metros */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Metros
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-white font-mono block">
+                    {activeOP.metros ? `${activeOP.metros.toLocaleString('pt-BR')} m` : (activeEspecificacao?.metros ? `${activeEspecificacao.metros.toLocaleString('pt-BR')} m` : '—')}
+                  </span>
+                </div>
 
-          {ultimosEventos.length > 0 ? (
-            <div className="space-y-2.5">
-              {ultimosEventos.map((ev) => {
-                const opDaLista = ops.find(o => o.id === ev.opId);
-                const opCod = opDaLista?.codigo || '';
-                const style = getTipoEventoLabel(ev.tipoEvento);
-                const operadorNome = operadores.find(o => o.id === ev.operadorId)?.nome || 'Operador';
+                {/* Voltas */}
+                <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                    Voltas
+                  </span>
+                  <span className="text-xs sm:text-sm font-black text-emerald-400 font-mono block">
+                    {(activeOP.voltas ?? activeEspecificacao?.voltas)?.toLocaleString('pt-BR') || '—'}
+                  </span>
+                </div>
+              </div>
 
-                return (
-                  <div 
-                    key={ev.id} 
-                    className="bg-black/30 rounded-xl p-3.5 border border-white/5 flex items-center justify-between gap-4"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className={cn(
-                        "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border",
-                        style.color
-                      )}>
-                        {style.label}
-                      </span>
-                      <div>
-                        <p className="text-xs font-bold text-white leading-snug">
-                          {ev.observacao || `Ação na máquina ${maquina}`}
-                        </p>
-                        <p className="text-[10px] text-neutral-500 font-medium">
-                          {opCod ? `OP: ${opCod} • ` : ''}Por: {operadorNome}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-neutral-400 whitespace-nowrap">
-                      {formatHora(ev.createdAt || ev.timestampInicio)}
+              {/* Rolo Desenho (quando existir) */}
+              {temRoloDesenho && (
+                <div className="bg-purple-950/20 border border-purple-500/30 rounded-2xl p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎨</span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-purple-300">
+                      Rolo Desenho:
                     </span>
                   </div>
-                );
-              })}
+                  <span className="text-xs font-black font-mono text-purple-200 uppercase bg-purple-500/20 px-3 py-1 rounded-xl border border-purple-500/30">
+                    {valorRoloDesenho || 'Sim (Especial)'}
+                  </span>
+                </div>
+              )}
+
+              {/* Dados Complementares (quando botão "Expandir informações" for acionado) */}
+              {isInfoExpanded && (
+                <div className="pt-3 border-t border-white/10 space-y-3 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-black/30 rounded-xl p-3 border border-white/5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                        Largura
+                      </span>
+                      <span className="text-sm font-black text-white font-mono">
+                        {activeEspecificacao?.largura || activeOP.largura ? `${activeEspecificacao?.largura || activeOP.largura} cm` : '—'}
+                      </span>
+                    </div>
+
+                    <div className="bg-black/30 rounded-xl p-3 border border-white/5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                        Fios por Portada (Gaiola)
+                      </span>
+                      <span className="text-sm font-black text-white font-mono">
+                        {activeOP.fios_por_portada || activeOP.fiosPorPortada || '—'} fios
+                      </span>
+                    </div>
+
+                    <div className="bg-black/30 rounded-xl p-3 border border-white/5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                        Composição do Fio
+                      </span>
+                      <span className="text-sm font-black text-white truncate block">
+                        {activeEspecificacao?.composicao?.length 
+                          ? activeEspecificacao.composicao.map((c: any) => `${c.fio} (${c.quantidade})`).join(', ') 
+                          : 'Padrão'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block mb-1">
+                      Observações da Produção & Instruções
+                    </span>
+                    <p className="text-xs text-neutral-200 leading-relaxed font-medium">
+                      {observacoesComplementares}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* SE A OP AINDA NÃO FOI INICIADA: AVISO E BOTÃO DE CONFERÊNCIA INICIAL */}
+            {statusOperacao !== 'PRODUZINDO' && (
+              <div className="bg-gradient-to-r from-emerald-950/40 via-[#12161f] to-emerald-950/40 border border-emerald-500/30 rounded-3xl p-6 text-center shadow-xl space-y-3">
+                <h3 className="text-lg font-black uppercase tracking-wider text-white">
+                  Ordem de Produção Selecionada
+                </h3>
+                <p className="text-xs text-neutral-300 max-w-xl mx-auto">
+                  Confira as configurações físicas de gaiola, dentes do pente e rolete antes de dar partida na máquina.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsConferenciaModalOpen(true)}
+                    className="py-4 px-8 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm uppercase tracking-wider shadow-xl shadow-emerald-900/40 transition-all active:scale-95 flex items-center justify-center gap-2 mx-auto"
+                  >
+                    <Play className="w-5 h-5 fill-current" />
+                    <span>Iniciar Produção (Conferência)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================== */}
+            {/* 3. ÁREA DAS PORTADAS (PAINEL AUTOMÁTICO SEM CONTADOR)      */}
+            {/* ========================================================== */}
+            <section className="bg-[#12161f] border border-white/10 rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <RotateCw className="w-4 h-4 text-blue-400" />
+                  <h2 className="text-sm font-black uppercase tracking-widest text-neutral-200">
+                    Portadas do Rolo ({totalPortadas} prevístas)
+                  </h2>
+                </div>
+
+                {/* Legenda Exata: 🟢 concluída | 🟡 atual | ⬜ pendente */}
+                <div className="flex items-center gap-3 sm:gap-5 text-xs font-bold uppercase tracking-wider text-neutral-400">
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-sm">🟢</span>
+                    <span className="text-emerald-400">Concluída</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-sm">🟡</span>
+                    <span className="text-amber-300">Atual</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-sm">⬜</span>
+                    <span className="text-neutral-400">Pendente</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Grid Automático de Portadas */}
+              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-9 lg:grid-cols-10 gap-2 sm:gap-3 py-2">
+                {Array.from({ length: totalPortadas }, (_, i) => i + 1).map((num) => {
+                  const isConcluida = num <= portadasAtual;
+                  const isAtual = num === portadasAtual + 1 && portadasAtual < totalPortadas;
+                  const isPendente = num > portadasAtual + 1;
+
+                  return (
+                    <div
+                      key={num}
+                      className={cn(
+                        "rounded-2xl p-3 flex flex-col items-center justify-center transition-all min-h-[68px]",
+                        isConcluida && "bg-emerald-950/40 border-2 border-emerald-500/60 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.15)]",
+                        isAtual && "bg-amber-500/20 border-2 border-amber-400 text-amber-200 ring-4 ring-amber-400/20 shadow-[0_0_18px_rgba(245,158,11,0.3)] animate-pulse",
+                        isPendente && "bg-black/30 border border-white/10 text-neutral-500"
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 font-mono font-black text-sm sm:text-base">
+                        <span>{isConcluida ? '🟢' : isAtual ? '🟡' : '⬜'}</span>
+                        <span>{String(num).padStart(2, '0')}</span>
+                      </div>
+                      <span className={cn(
+                        "text-[9px] font-bold uppercase tracking-wider mt-1",
+                        isConcluida && "text-emerald-400",
+                        isAtual && "text-amber-300 font-black",
+                        isPendente && "text-neutral-600"
+                      )}>
+                        {isConcluida ? 'Concluída' : isAtual ? 'Atual' : 'Pendente'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ======================================================== */}
+              {/* 5. RESUMO (ABAIXO DAS PORTADAS COM TEMPO REAL)          */}
+              {/* ======================================================== */}
+              <div className="grid grid-cols-3 gap-3 sm:gap-4 p-4 sm:p-5 rounded-2xl bg-black/50 border border-white/10 mt-3">
+                <div>
+                  <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-400 block mb-1">
+                    Concluídas:
+                  </span>
+                  <span className="text-xl sm:text-3xl font-black font-mono text-emerald-400 block">
+                    {String(portadasAtual).padStart(2, '0')} / {String(totalPortadas).padStart(2, '0')}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-400 block mb-1">
+                    Restantes:
+                  </span>
+                  <span className="text-xl sm:text-3xl font-black font-mono text-neutral-200 block">
+                    {String(Math.max(0, totalPortadas - portadasAtual)).padStart(2, '0')}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-400 block mb-1">
+                    Tempo Produção
+                  </span>
+                  <span className="text-xl sm:text-3xl font-black font-mono text-blue-400 block">
+                    {tempoProducao}
+                  </span>
+                </div>
+              </div>
+
+              {/* Registro visual das ocorrências anotadas neste rolo */}
+              {ocorrenciasCicloAtual.length > 0 && (
+                <div className="bg-amber-950/20 border border-amber-500/30 rounded-2xl p-3.5 space-y-1 mt-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Ocorrências anotadas neste rolo ({ocorrenciasCicloAtual.length}):
+                  </span>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {ocorrenciasCicloAtual.map((oc, i) => (
+                      <span key={i} className="px-2.5 py-1 rounded-lg bg-black/50 border border-amber-500/30 text-[11px] font-mono text-amber-200 font-bold">
+                        {oc}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* ========================================================== */}
+            {/* 6. BOTÕES (A TELA DEVE POSSUIR APENAS ESTES 3)             */}
+            {/* ========================================================== */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 pt-1">
+              {/* Botão 1: FINALIZAR PORTADA */}
+              <button
+                type="button"
+                onClick={handleFinalizarPortada}
+                className="h-20 sm:h-24 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:from-emerald-700 active:to-emerald-600 text-white flex items-center justify-center gap-3 shadow-xl shadow-emerald-900/30 border border-emerald-400/30 transition-all active:scale-[0.98] focus:outline-none"
+              >
+                <CheckCircle2 className="w-7 h-7 stroke-[2.5]" />
+                <span className="text-base sm:text-xl font-black uppercase tracking-wider">
+                  FINALIZAR PORTADA
+                </span>
+              </button>
+
+              {/* Botão 2: REGISTRAR OCORRÊNCIA */}
+              <button
+                type="button"
+                onClick={handleOpenOcorrenciaModal}
+                className="h-20 sm:h-24 rounded-2xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 active:from-amber-700 active:to-amber-600 text-white flex items-center justify-center gap-3 shadow-xl shadow-amber-900/30 border border-amber-400/30 transition-all active:scale-[0.98] focus:outline-none"
+              >
+                <AlertTriangle className="w-7 h-7 stroke-[2.5]" />
+                <span className="text-base sm:text-xl font-black uppercase tracking-wider">
+                  REGISTRAR OCORRÊNCIA
+                </span>
+              </button>
+
+              {/* Botão 3: FINALIZAR ROLO */}
+              <button
+                type="button"
+                onClick={handleOpenFinalizarModal}
+                className="h-20 sm:h-24 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 active:from-blue-700 active:to-blue-600 text-white flex items-center justify-center gap-3 shadow-xl shadow-blue-900/30 border border-blue-400/30 transition-all active:scale-[0.98] focus:outline-none"
+              >
+                <Package className="w-7 h-7 stroke-[2.5]" />
+                <span className="text-base sm:text-xl font-black uppercase tracking-wider">
+                  FINALIZAR ROLO
+                </span>
+              </button>
             </div>
-          ) : (
-            <div className="py-8 text-center text-neutral-500">
-              <p className="text-sm font-bold uppercase tracking-wider">Nenhum evento registrado.</p>
+          </>
+        ) : (
+          /* ============================================================ */
+          /* NENHUMA OP ATIVA: LISTA DE ORDENS DA MÁQUINA               */
+          /* ============================================================ */
+          <section className="bg-[#12161f] border border-white/10 rounded-3xl p-6 shadow-xl space-y-6">
+            <div className="flex items-center justify-between border-b border-white/5 pb-4">
+              <div className="flex items-center gap-3">
+                <Layers className="w-6 h-6 text-blue-400" />
+                <div>
+                  <h2 className="text-lg font-black uppercase tracking-wider text-white">
+                    Fila de Produção da Máquina ({opsDaMaquina.length})
+                  </h2>
+                  <p className="text-xs text-neutral-400">
+                    Selecione uma ordem de produção programada para esta máquina para iniciar os trabalhos.
+                  </p>
+                </div>
+              </div>
             </div>
-          )}
-        </section>
+
+            {opsDaMaquina.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {opsDaMaquina.map((opItem, idx) => {
+                  const cName = getClienteNome(opItem);
+                  const qPlan = Number(opItem.quantidade_planejada ?? opItem.qtdRolos ?? 1);
+                  const qProd = Number(opItem.quantidade_produzida ?? 0);
+
+                  return (
+                    <div
+                      key={opItem.id}
+                      className="bg-black/40 border border-white/10 hover:border-blue-500/40 rounded-2xl p-5 space-y-4 transition-all"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-neutral-400">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-lg font-black text-white font-mono">
+                            {opItem.codigo}
+                          </span>
+                        </div>
+                        <span className={cn(
+                          "px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase font-mono border",
+                          opItem.urgencia === 'ALTA' && "bg-red-500/20 text-red-400 border-red-500/30",
+                          opItem.urgencia === 'MEDIA' && "bg-amber-500/20 text-amber-400 border-amber-500/30",
+                          opItem.urgencia === 'BAIXA' && "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                        )}>
+                          {opItem.urgencia}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase text-neutral-500 block">Cliente</span>
+                        <span className="text-base font-black text-blue-300 block truncate">{cName}</span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 bg-black/30 p-3 rounded-xl border border-white/5 text-center">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-neutral-500 block">Título</span>
+                          <span className="text-xs font-mono font-bold text-white truncate block">
+                            {opItem.titulo_fio || opItem.tituloFio || '—'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-neutral-500 block">Fios</span>
+                          <span className="text-xs font-mono font-bold text-blue-400 block">
+                            {(opItem.total_fios ?? opItem.totalFios)?.toLocaleString('pt-BR')}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-neutral-500 block">Rolos</span>
+                          <span className="text-xs font-mono font-bold text-emerald-400 block">
+                            {qProd} / {qPlan}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveOPId(opItem.id);
+                          toast.success(`Ordem ${opItem.codigo} selecionada.`);
+                        }}
+                        className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider transition-all active:scale-[0.98] shadow-lg shadow-blue-900/30 flex items-center justify-center gap-2"
+                      >
+                        <Play className="w-4 h-4 fill-current" />
+                        <span>Selecionar para Produzir</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-16 text-neutral-500 space-y-2">
+                <Clock className="w-12 h-12 mx-auto text-neutral-600 mb-2" />
+                <p className="text-base font-bold uppercase tracking-wider text-neutral-400">
+                  Nenhuma Ordem Programada
+                </p>
+                <p className="text-xs text-neutral-600 max-w-sm mx-auto">
+                  Não há ordens de produção pendentes para a {maquina}. O programador definirá as próximas ordens.
+                </p>
+              </div>
+            )}
+          </section>
+        )}
 
       </main>
 
       {/* ============================================================== */}
-      {/* MODAL: FINALIZAR ROLO                                          */}
+      {/* MODAL: CONFERÊNCIA ANTES DO INÍCIO                             */}
       {/* ============================================================== */}
-      {isFinalizarModalOpen && (
+      {activeOP && (
+        <ModalConferencia
+          isOpen={isConferenciaModalOpen}
+          onClose={() => setIsConferenciaModalOpen(false)}
+          onConfirm={handleConfirmarInicioConferencia}
+          op={activeOP}
+          clienteNome={clienteNome}
+          tituloFio={activeOP.titulo_fio || activeOP.tituloFio || activeTitulo?.codigo}
+          tipoFio={activeOP.tipo_fio || activeOP.tipoFio || activeTitulo?.tipo_fio}
+          especificacao={activeEspecificacao}
+          maquina={maquina}
+        />
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: FINALIZAR ROLO (7. FINALIZAR ROLO)                      */}
+      {/* ============================================================== */}
+      {isFinalizarModalOpen && activeOP && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#151922] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5">
+          <div className="bg-[#151922] border border-white/10 rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h3 className="text-lg font-black uppercase tracking-wider text-white flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
@@ -1346,46 +1388,51 @@ export default function DashboardOperador() {
             </div>
 
             <div className="space-y-4">
-              {/* Quantidade de portadas acumuladas (somente leitura) */}
-              <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                  Portadas acumuladas
+              {/* Quantidade de portadas acumuladas */}
+              <div className="bg-black/40 rounded-2xl p-4 border border-white/5 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">
+                  Rolo em Finalização
                 </span>
-                <span className="text-2xl font-black font-mono text-emerald-400">
-                  {portadasAtual} <span className="text-xs text-neutral-400 font-normal">portadas</span>
-                </span>
+                <div className="text-xl font-black font-mono text-white">
+                  {roloAtualFormatado}
+                </div>
+                <div className="text-xs text-neutral-300 font-semibold pt-1">
+                  Portadas acumuladas: <span className="text-emerald-400 font-mono font-bold text-sm">{portadasAtual} de {totalPortadas}</span>
+                </div>
               </div>
 
-              {/* Campo Observação (opcional) */}
+              {/* Campo Observação Opcional */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-neutral-400 mb-1.5">
                   Observação <span className="text-neutral-500 font-normal text-[11px]">(Opcional)</span>
                 </label>
                 <textarea 
-                  rows={3}
+                  rows={2}
                   value={modalFinalizarObs}
                   onChange={(e) => setModalFinalizarObs(e.target.value)}
-                  className="w-full bg-black/50 border border-white/10 text-white rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Observações sobre o rolo (opcional)..."
+                  className="w-full bg-black/50 border border-white/10 text-white rounded-2xl py-3 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Observação sobre o rolo finalizado..."
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button 
+                type="button"
                 onClick={() => {
                   setIsFinalizarModalOpen(false);
                   setModalFinalizarObs('');
                 }}
-                className="w-full py-3.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-sm transition-colors"
+                className="w-full py-4 rounded-2xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-sm transition-colors uppercase tracking-wider"
               >
                 Cancelar
               </button>
               <button 
+                type="button"
                 onClick={handleConfirmFinalizarRolo}
-                className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-emerald-900/30 transition-colors"
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-emerald-900/30 transition-all active:scale-[0.99]"
               >
-                Finalizar Rolo
+                Confirmar
               </button>
             </div>
           </div>
@@ -1393,16 +1440,22 @@ export default function DashboardOperador() {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: REGISTRAR OCORRÊNCIA                                    */}
+      {/* MODAL: REGISTRAR OCORRÊNCIA (4. OCORRÊNCIAS)                   */}
       {/* ============================================================== */}
-      {isOcorrenciaModalOpen && (
+      {isOcorrenciaModalOpen && activeOP && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#151922] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5">
+          <div className="bg-[#151922] border border-white/10 rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-lg font-black uppercase tracking-wider text-white flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-rose-400" />
-                Registrar Ocorrência
-              </h3>
+              <div>
+                <h3 className="text-lg font-black uppercase tracking-wider text-white flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                  Registrar Ocorrência
+                </h3>
+                {/* Portada Atual Automática */}
+                <span className="text-xs font-mono font-bold text-amber-300 block mt-0.5">
+                  Vinculada à Portada {String(Math.min(totalPortadas, portadasAtual + 1)).padStart(2, '0')}
+                </span>
+              </div>
               <button 
                 onClick={() => {
                   setIsOcorrenciaModalOpen(false);
@@ -1417,24 +1470,35 @@ export default function DashboardOperador() {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-neutral-400 mb-2">
-                  Tipo de Ocorrência
+                  Selecione o Tipo da Ocorrência
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {TIPOS_OCORRENCIA.map(tipo => (
-                    <button
-                      key={tipo}
-                      type="button"
-                      onClick={() => setOcorrenciaTipo(tipo)}
-                      className={cn(
-                        "p-3 rounded-xl border text-xs font-bold text-left transition-all",
-                        ocorrenciaTipo === tipo 
-                          ? "bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-sm"
-                          : "bg-black/30 text-neutral-400 border-white/5 hover:border-white/20"
-                      )}
-                    >
-                      {tipo}
-                    </button>
-                  ))}
+                <div className="space-y-2">
+                  {TIPOS_OCORRENCIA.map(tipo => {
+                    const isSelected = ocorrenciaTipo === tipo;
+                    return (
+                      <button
+                        key={tipo}
+                        type="button"
+                        onClick={() => setOcorrenciaTipo(tipo)}
+                        className={cn(
+                          "w-full p-3.5 rounded-xl border text-sm font-bold text-left transition-all flex items-center justify-between",
+                          isSelected 
+                            ? "bg-amber-500/20 text-amber-200 border-amber-400 shadow-md ring-2 ring-amber-400/20"
+                            : "bg-black/30 text-neutral-300 border-white/5 hover:border-white/20"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={cn(
+                            "w-4 h-4 rounded-full border flex items-center justify-center",
+                            isSelected ? "border-amber-400 bg-amber-400" : "border-neutral-500"
+                          )}>
+                            {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-black" />}
+                          </span>
+                          <span>{tipo}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1446,9 +1510,9 @@ export default function DashboardOperador() {
                   <textarea
                     value={ocorrenciaObs}
                     onChange={(e) => setOcorrenciaObs(e.target.value)}
-                    rows={3}
-                    className="w-full bg-black/50 border border-white/10 text-white rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
-                    placeholder="Descrição da ocorrência..."
+                    rows={2}
+                    className="w-full bg-black/50 border border-white/10 text-white rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    placeholder="Detalhes adicionais da ocorrência..."
                     autoFocus
                   />
                 </div>
@@ -1457,19 +1521,21 @@ export default function DashboardOperador() {
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button 
+                type="button"
                 onClick={() => {
                   setIsOcorrenciaModalOpen(false);
                   setOcorrenciaObs('');
                 }}
-                className="w-full py-3.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-sm transition-colors"
+                className="w-full py-3.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-sm transition-colors uppercase tracking-wider"
               >
                 Cancelar
               </button>
               <button 
+                type="button"
                 onClick={handleConfirmOcorrencia}
-                className="w-full py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-rose-900/30 transition-colors"
+                className="w-full py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-amber-900/30 transition-colors"
               >
-                Registrar
+                Salvar
               </button>
             </div>
           </div>
@@ -1477,11 +1543,11 @@ export default function DashboardOperador() {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: TROCA RÁPIDA DE OPERADOR                                */}
+      {/* MODAL: IDENTIFICAÇÃO DO OPERADOR                               */}
       {/* ============================================================== */}
       {isTrocaOperadorModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#151922] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5">
+          <div className="bg-[#151922] border border-white/10 rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h3 className="text-lg font-black uppercase tracking-wider text-white flex items-center gap-2">
                 <User className="w-5 h-5 text-blue-400" />
@@ -1533,383 +1599,12 @@ export default function DashboardOperador() {
             </div>
 
             <button 
+              type="button"
               onClick={() => setIsTrocaOperadorModalOpen(false)}
               className="w-full py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-sm transition-colors mt-2"
             >
               Fechar
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* MODAL: SELEÇÃO DE OP NA FILA                                   */}
-      {/* ============================================================== */}
-      {isSelectOPModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#151922] border border-white/10 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-lg font-black uppercase tracking-wider text-white flex items-center gap-2">
-                <Layers className="w-5 h-5 text-blue-400" />
-                Fila de OPs — {maquina}
-              </h3>
-              <button 
-                onClick={() => setIsSelectOPModalOpen(false)}
-                className="p-1 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-              {opsDaMaquina.map(opItem => {
-                const cSupabase = supabaseClientes.find(item => item.id?.toString() === (opItem.cliente_id || opItem.clienteId)?.toString());
-                const cStore = clientes.find(item => item.id.toString() === (opItem.cliente_id || opItem.clienteId)?.toString());
-                const cName = opItem.clientes?.nome_fantasia || opItem.clientes?.nome || cSupabase?.nome_fantasia || cSupabase?.nome || cStore?.nomeFantasia || (cStore as any)?.nome || 'Cliente';
-                const isSelected = activeOP?.id === opItem.id;
-
-                return (
-                  <button
-                    key={opItem.id}
-                    onClick={() => {
-                      setActiveOPId(opItem.id);
-                      setIsSelectOPModalOpen(false);
-                      setPortadasAtual(0);
-                      toast.success(`Ordem ${opItem.codigo} selecionada.`);
-                    }}
-                    className={cn(
-                      "w-full p-4 rounded-xl border text-left transition-all space-y-2",
-                      isSelected 
-                        ? "bg-blue-600/20 border-blue-500/40" 
-                        : "bg-black/30 border-white/5 hover:border-white/20"
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-black text-white font-mono">{opItem.codigo}</span>
-                      <span className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-black uppercase font-mono border",
-                        opItem.urgencia === 'ALTA' && "bg-red-500/20 text-red-400 border-red-500/30",
-                        opItem.urgencia === 'MEDIA' && "bg-amber-500/20 text-amber-400 border-amber-500/30",
-                        opItem.urgencia === 'BAIXA' && "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                      )}>
-                        {opItem.urgencia}
-                      </span>
-                    </div>
-
-                    <div className="text-xs text-neutral-300 font-bold truncate">
-                      {cName}
-                    </div>
-
-                    <div className="text-[11px] text-neutral-400 flex items-center justify-between font-mono">
-                      <span>{opItem.titulo_fio || opItem.tituloFio} ({(opItem.total_fios ?? opItem.totalFios)?.toLocaleString('pt-BR')} fios)</span>
-                      <span>{opItem.quantidade_planejada ?? opItem.qtdRolos} rolos</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <button 
-              onClick={() => setIsSelectOPModalOpen(false)}
-              className="w-full py-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-sm transition-colors"
-            >
-              Fechar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* MODAL FULLSCREEN: ESPECIFICAÇÃO COMPLETA (FICHA TÉCNICA)       */}
-      {/* ============================================================== */}
-      {isSpecModalOpen && activeOP && (
-        <div className="fixed inset-0 z-50 bg-[#090c12] text-white flex flex-col overflow-hidden animate-in fade-in duration-150">
-          {/* Barra Superior Fixa */}
-          <div className="bg-[#121620] border-b border-white/10 px-4 sm:px-8 py-4 flex items-center justify-between shadow-xl shrink-0">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-xl">
-                📖
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base sm:text-xl font-black uppercase tracking-wider text-white">
-                    Ficha Técnica Completa
-                  </h2>
-                  <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                    Somente Leitura
-                  </span>
-                </div>
-                <p className="text-xs text-neutral-400 font-mono">
-                  OP <span className="text-white font-bold">{activeOP.codigo}</span> • Cliente: <span className="text-blue-300 font-bold">{clienteNome}</span> • Máquina: <span className="text-neutral-200">{activeOP.maquina || maquina}</span>
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setIsSpecModalOpen(false)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95"
-              title="Fechar (ESC)"
-            >
-              <X className="w-4 h-4" />
-              <span>Fechar</span>
-            </button>
-          </div>
-
-          {/* Conteúdo com Scroll */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-6 max-w-6xl mx-auto w-full">
-            {/* Bloco 1: Identificação da Ordem */}
-            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                <span className="text-xs font-black uppercase tracking-widest text-blue-400 flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  Identificação da Ordem & Planejamento
-                </span>
-                <span className={cn(
-                  "px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider font-mono border",
-                  activeOP.urgencia === 'ALTA' && "bg-red-500/20 text-red-400 border-red-500/30",
-                  activeOP.urgencia === 'MEDIA' && "bg-amber-500/20 text-amber-400 border-amber-500/30",
-                  activeOP.urgencia === 'BAIXA' && "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                )}>
-                  Urgência: {activeOP.urgencia || 'NORMAL'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. Cliente */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Cliente
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white block">
-                    {clienteNome}
-                  </span>
-                </div>
-
-                {/* 2. OP */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Código da OP
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-blue-400 font-mono block">
-                    {activeOP.codigo}
-                  </span>
-                </div>
-
-                {/* 3. Especificação */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Especificação
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block truncate" title={especificacaoCodigo}>
-                    {especificacaoCodigo}
-                  </span>
-                </div>
-
-                {/* 16. Quantidade Planejada */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Quantidade Planejada
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-emerald-400 font-mono block">
-                    {planejado} <span className="text-xs font-semibold text-neutral-400">rolos</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bloco 2: Fio & Matéria-Prima */}
-            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
-              <div className="border-b border-white/5 pb-3">
-                <span className="text-xs font-black uppercase tracking-widest text-purple-400 flex items-center gap-2">
-                  <Layers className="w-4 h-4" />
-                  Dados do Fio & Construção
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 4. Título */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Título do Fio
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block truncate">
-                    {activeTitulo?.codigo || activeOP.titulo_fio || activeOP.tituloFio || '—'}
-                  </span>
-                  {activeTitulo?.descricao && (
-                    <span className="text-[11px] text-neutral-400 block mt-0.5 truncate">
-                      {activeTitulo.descricao}
-                    </span>
-                  )}
-                </div>
-
-                {/* 5. Tipo do Fio */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Tipo do Fio
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white block truncate">
-                    {activeTitulo?.tipo_fio || activeTitulo?.tipo || (activeOP as any)?.tipo_fio || (activeOP as any)?.tipoFio || '—'}
-                  </span>
-                </div>
-
-                {/* 6. Cor */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Cor do Fio
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-purple-300 block truncate">
-                    {corFio}
-                  </span>
-                </div>
-
-                {/* 7. Total de Fios */}
-                <div className="bg-black/30 rounded-xl p-3.5 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Total de Fios
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-blue-400 font-mono block">
-                    {(activeOP.total_fios ?? activeOP.totalFios)?.toLocaleString('pt-BR') || '—'} <span className="text-xs font-semibold text-neutral-400">fios</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bloco 3: Parâmetros Técnicos da Máquina & Fita */}
-            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
-              <div className="border-b border-white/5 pb-3">
-                <span className="text-xs font-black uppercase tracking-widest text-amber-400 flex items-center gap-2">
-                  <Sliders className="w-4 h-4" />
-                  Parâmetros Técnicos & Ajustes de Máquina
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-                {/* 8. Largura */}
-                <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Largura
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block">
-                    {activeEspecificacao?.largura || (activeOP as any)?.largura || '—'}
-                  </span>
-                </div>
-
-                {/* 9. Pente */}
-                <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Pente
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block">
-                    {activeEspecificacao?.pente || (activeOP as any)?.pente || '—'}
-                  </span>
-                </div>
-
-                {/* 10. Faca */}
-                <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Faca
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block">
-                    {activeEspecificacao?.faca || (activeOP as any)?.faca || '—'}
-                  </span>
-                </div>
-
-                {/* 11. Avanço */}
-                <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Avanço
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block">
-                    {activeEspecificacao?.avanco || (activeOP as any)?.avanco || '—'}
-                  </span>
-                </div>
-
-                {/* 12. Abertura */}
-                <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Abertura
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-white font-mono block">
-                    {activeEspecificacao?.abertura || (activeOP as any)?.abertura || '—'}
-                  </span>
-                </div>
-
-                {/* 13. Rolete */}
-                <div className="bg-black/30 rounded-xl p-3 border border-white/5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                    Rolete
-                  </span>
-                  <span className="text-base sm:text-lg font-black text-amber-300 font-mono block truncate" title={activeOP.rolete || activeEspecificacao?.rolete}>
-                    {activeOP.rolete || activeEspecificacao?.rolete || '—'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bloco 4: Medidas & Rotação */}
-            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
-              <div className="border-b border-white/5 pb-3">
-                <span className="text-xs font-black uppercase tracking-widest text-emerald-400 flex items-center gap-2">
-                  <Activity className="w-4 h-4" />
-                  Metros & Voltas por Rolo
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* 14. Metros */}
-                <div className="bg-black/30 rounded-xl p-4 border border-white/5 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                      Metros por Rolo
-                    </span>
-                    <span className="text-xl sm:text-2xl font-black text-white font-mono block">
-                      {activeOP.metros ? `${activeOP.metros.toLocaleString('pt-BR')} m` : (activeEspecificacao?.metros ? `${activeEspecificacao.metros.toLocaleString('pt-BR')} m` : '—')}
-                    </span>
-                  </div>
-                  <span className="text-2xl">📏</span>
-                </div>
-
-                {/* 15. Voltas */}
-                <div className="bg-black/30 rounded-xl p-4 border border-white/5 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-1">
-                      Voltas por Rolo
-                    </span>
-                    <span className="text-xl sm:text-2xl font-black text-emerald-400 font-mono block">
-                      {(activeOP.voltas ?? (activeOP as any)?.voltasPorRolo ?? activeEspecificacao?.voltas)?.toLocaleString('pt-BR') || '—'} <span className="text-sm font-semibold text-neutral-400">voltas</span>
-                    </span>
-                  </div>
-                  <span className="text-2xl">🔄</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bloco 5: 17. Observações */}
-            <div className="bg-[#121620] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-xl space-y-3">
-              <div className="border-b border-white/5 pb-3">
-                <span className="text-xs font-black uppercase tracking-widest text-neutral-300 flex items-center gap-2">
-                  <Info className="w-4 h-4 text-blue-400" />
-                  Observações Gerais & Instruções
-                </span>
-              </div>
-
-              <div className="bg-black/30 rounded-xl p-4 border border-white/5">
-                <p className="text-sm text-neutral-200 whitespace-pre-wrap leading-relaxed">
-                  {observacoesFicha || 'Nenhuma observação cadastrada para esta Ordem de Produção.'}
-                </p>
-              </div>
-            </div>
-
-            {/* Botão de Fechamento Inferior */}
-            <div className="pt-2 pb-6">
-              <button
-                type="button"
-                onClick={() => setIsSpecModalOpen(false)}
-                className="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm uppercase tracking-wider shadow-xl shadow-blue-900/30 transition-all active:scale-[0.99]"
-              >
-                Voltar para o Painel de Produção
-              </button>
-            </div>
           </div>
         </div>
       )}
