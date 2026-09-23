@@ -1,19 +1,49 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useStore } from '../../store/useStore';
-import { Plus, Search, ArrowDownRight, ArrowUpRight, X, Trash2, Edit2 } from 'lucide-react';
+import { Plus, Search, ArrowDownRight, ArrowUpRight, X, Trash2, Edit2, Scale, Building2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { generateId } from '../../lib/utils';
 import { Entrada, Saida } from '../../types';
 import { TIPOS_FIO } from '../../lib/calculations';
+import { FilaRolosAguardandoPesagem } from './FilaRolosAguardandoPesagem';
 
 export default function DashboardEscritorio() {
   const { user, clientes, fiosCliente, ops, rolos, entradas, saidas, addEntrada, updateEntrada, deleteEntrada, addSaida, updateSaida, deleteSaida, addEventoProducao } = useStore();
-  const [activeTab, setActiveTab] = useState<'ENTRADAS' | 'SAIDAS' | 'FATURAMENTO'>('ENTRADAS');
+  const [activeTab, setActiveTab] = useState<'PESAGEM' | 'ENTRADAS' | 'SAIDAS' | 'FATURAMENTO'>('PESAGEM');
   const [saidaTab, setSaidaTab] = useState<'SALDO' | 'ROLOS'>('SALDO');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaidaModalOpen, setIsSaidaModalOpen] = useState(false);
   const [editingEntradaId, setEditingEntradaId] = useState<string | null>(null);
   const [editingSaidaId, setEditingSaidaId] = useState<string | null>(null);
+  const [rolosAguardandoCount, setRolosAguardandoCount] = useState<number>(0);
+
+  // Calcular contagem de rolos aguardando pesagem
+  useEffect(() => {
+    const recalcularCount = () => {
+      let count = rolos.filter(r => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
+      try {
+        const raw = localStorage.getItem('texlog_historico_rolos_produzidos');
+        if (raw) {
+          const list = JSON.parse(raw);
+          const locais = list.filter((r: any) => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
+          count = Math.max(count, locais);
+        }
+      } catch {}
+      setRolosAguardandoCount(count);
+    };
+
+    recalcularCount();
+    window.addEventListener('storage', recalcularCount);
+    window.addEventListener('texlog_novo_rolo_pesagem', recalcularCount);
+    const interval = setInterval(recalcularCount, 4000);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', recalcularCount);
+      window.removeEventListener('texlog_novo_rolo_pesagem', recalcularCount);
+    };
+  }, [rolos]);
 
   const [entradaForm, setEntradaForm] = useState<Partial<Entrada>>({
     clienteId: '',
@@ -120,7 +150,14 @@ export default function DashboardEscritorio() {
           <h1 className="text-3xl font-bold text-white tracking-tight">Escritório</h1>
           <p className="text-neutral-400 mt-1">Controle de entradas, saídas e faturamento</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/escritorio/clientes"
+            className="bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 px-5 py-3 rounded-xl font-medium flex items-center gap-2 transition-colors text-sm"
+          >
+            <Building2 className="w-4 h-4" />
+            <span>Módulo Clientes</span>
+          </Link>
           {activeTab === 'ENTRADAS' && (
             <button
               onClick={() => {
@@ -173,18 +210,41 @@ export default function DashboardEscritorio() {
       </div>
 
       <div className="flex border-b border-neutral-800 overflow-x-auto">
-        {['ENTRADAS', 'SAIDAS', 'FATURAMENTO'].map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab as any)}
-            className={`px-6 py-4 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === tab ? 'border-blue-500 text-blue-500' : 'border-transparent text-neutral-400 hover:text-white'
-            }`}
-          >
-            {tab.charAt(0) + tab.slice(1).toLowerCase()}
-          </button>
-        ))}
+        {[
+          { id: 'PESAGEM', label: 'Rolos aguardando pesagem', count: rolosAguardandoCount, icon: Scale },
+          { id: 'ENTRADAS', label: 'Entradas' },
+          { id: 'SAIDAS', label: 'Saídas' },
+          { id: 'FATURAMENTO', label: 'Faturamento' }
+        ].map(tab => {
+          const isPesagem = tab.id === 'PESAGEM';
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`px-6 py-4 text-sm font-bold whitespace-nowrap border-b-2 transition-all flex items-center gap-2.5 cursor-pointer ${
+                isActive
+                  ? isPesagem
+                    ? 'border-amber-500 text-amber-400 bg-amber-500/5'
+                    : 'border-blue-500 text-blue-500 bg-blue-500/5'
+                  : 'border-transparent text-neutral-400 hover:text-white'
+              }`}
+            >
+              {tab.icon && <tab.icon className={`w-4 h-4 ${isPesagem && tab.count > 0 ? 'text-amber-400 animate-pulse' : ''}`} />}
+              <span>{tab.label}</span>
+              {typeof tab.count === 'number' && tab.count > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-mono font-black bg-amber-500 text-black">
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
+
+      {activeTab === 'PESAGEM' && (
+        <FilaRolosAguardandoPesagem />
+      )}
 
       {activeTab === 'ENTRADAS' && (
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">

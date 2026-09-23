@@ -12,7 +12,8 @@ import {
   Menu,
   X,
   Play,
-  BarChart3
+  BarChart3,
+  RotateCcw
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '../lib/utils';
@@ -52,6 +53,7 @@ export default function Layout() {
       case 'ESCRITORIO':
         return [
           { name: 'Dashboard', path: '/escritorio', icon: LayoutDashboard },
+          { name: 'Clientes', path: '/escritorio/clientes', icon: Users },
         ];
       case 'ESTOQUE':
         return [
@@ -102,6 +104,27 @@ export default function Layout() {
               </Link>
             );
           })}
+
+          {user?.role === 'PROGRAMADOR' && (
+            <div className="pt-3 mt-3 border-t border-neutral-800/80">
+              <div className="px-4 mb-2 text-[11px] font-semibold tracking-wider text-neutral-500 uppercase flex items-center justify-between">
+                <span>Administração</span>
+                <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-mono">ADMIN</span>
+              </div>
+              <Link
+                to="/administracao/reset-operacional"
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 rounded-xl transition-colors",
+                  location.pathname === "/administracao/reset-operacional"
+                    ? "bg-red-500/10 text-red-400 font-medium border border-red-500/20"
+                    : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                )}
+              >
+                <RotateCcw className="w-5 h-5 text-red-400" />
+                Reset Operacional
+              </Link>
+            </div>
+          )}
         </nav>
 
         <div className="p-4 border-t border-neutral-800">
@@ -152,6 +175,27 @@ export default function Layout() {
                 </Link>
               );
             })}
+
+            {user?.role === 'PROGRAMADOR' && (
+              <div className="pt-4 mt-2 border-t border-neutral-800">
+                <div className="px-4 mb-2 text-xs font-semibold tracking-wider text-neutral-500 uppercase">
+                  Administração
+                </div>
+                <Link
+                  to="/administracao/reset-operacional"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-4 rounded-xl transition-colors text-lg",
+                    location.pathname === "/administracao/reset-operacional"
+                      ? "bg-red-500/10 text-red-400 font-medium" 
+                      : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                  )}
+                >
+                  <RotateCcw className="w-6 h-6 text-red-400" />
+                  Reset Operacional
+                </Link>
+              </div>
+            )}
           </nav>
           <div className="p-6 border-t border-neutral-800">
             <button

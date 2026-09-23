@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useStore } from '../../store/useStore';
+import { useOperadores } from '../../hooks/useOperadores';
 import { 
   Activity, 
   Play, 
@@ -17,7 +18,8 @@ import { ptBR } from 'date-fns/locale';
 import { cn } from '../../lib/utils';
 
 export default function MaquinasProgramador() {
-  const { ops, rolos, clientes, operadores, eventosProducao } = useStore();
+  const { ops, rolos, clientes, eventosProducao } = useStore();
+  const { operadores } = useOperadores();
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
 
   const maquinas = ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'];

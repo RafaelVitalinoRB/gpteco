@@ -1,12 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { Operador } from '../../types';
-import { generateId } from '../../lib/utils';
-import { Plus, Search, Edit2, Trash2, X } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X, RefreshCw, AlertCircle, Database } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { supabase } from '../../lib/supabase';
+import { carregarOperadores as fetchOperadoresSupabase } from '../../hooks/useOperadores';
 
 export default function Operadores() {
-  const { operadores, rolos, ops, eventosProducao, addOperador, updateOperador, deleteOperador } = useStore();
+  const { rolos, ops, eventosProducao } = useStore();
+  const [operadores, setOperadores] = useState<Operador[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -18,6 +23,60 @@ export default function Operadores() {
     maquinasAutorizadas: [],
     status: 'ATIVO',
   });
+
+  const carregarOperadores = async () => {
+    try {
+      setIsLoading(true);
+      const data = await fetchOperadoresSupabase(false);
+      const mapped: Operador[] = (data || []).map((op: any) => ({
+        id: String(op.id),
+        nome: String(op.nome || ''),
+        matricula: String(op.matricula || ''),
+        status: (op.status || (op.ativo !== false ? 'ATIVO' : 'INATIVO')) as 'ATIVO' | 'INATIVO',
+        maquinasAutorizadas: (op.maquinas_autorizadas || op.maquinasAutorizadas || ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4']) as any[],
+        createdAt: op.criado_em || op.created_at || new Date().toISOString(),
+        updatedAt: op.atualizado_em || op.updated_at || new Date().toISOString()
+      }));
+      setOperadores(mapped);
+      setDbError(null);
+    } catch (err: any) {
+      console.warn('Aviso ao carregar operadores do Supabase:', err);
+      setDbError(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    carregarOperadores();
+
+    const channelId = `admin_operadores_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
+    const channel = supabase
+      .channel(channelId)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'operadores'
+        },
+        () => carregarOperadores()
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'usuarios'
+        },
+        () => carregarOperadores()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const getOpStats = (opId: string) => {
     const events = eventosProducao.filter(e => e.operadorId === opId);
@@ -42,7 +101,7 @@ export default function Operadores() {
     } else {
       setFormData({
         nome: '',
-        maquinasAutorizadas: [],
+        maquinasAutorizadas: ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'],
         status: 'ATIVO',
       });
       setEditingId(null);
@@ -50,27 +109,101 @@ export default function Operadores() {
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.nome) {
+    if (!formData.nome?.trim()) {
       toast.error('Nome é obrigatório');
       return;
     }
 
-    if (editingId) {
-      updateOperador(editingId, formData);
-      toast.success('Operador atualizado');
-    } else {
-      addOperador({ ...formData, id: generateId() } as Operador);
-      toast.success('Operador cadastrado');
+    try {
+      if (editingId) {
+        let { error } = await supabase
+          .from('operadores')
+          .update({
+            nome: formData.nome.trim(),
+            status: formData.status || 'ATIVO',
+            ativo: formData.status === 'ATIVO',
+            maquinas_autorizadas: formData.maquinasAutorizadas || ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'],
+            atualizado_em: new Date().toISOString()
+          })
+          .eq('id', editingId);
+
+        if (error && error.code === 'PGRST205') {
+          // Fallback para usuarios
+          const { error: usrErr } = await supabase
+            .from('usuarios')
+            .update({
+              nome: formData.nome.trim(),
+              maquina: formData.maquinasAutorizadas?.[0] || 'MAQUINA 1'
+            })
+            .eq('id', editingId);
+          if (usrErr) throw usrErr;
+        } else if (error) {
+          throw error;
+        }
+
+        toast.success('Operador atualizado no Supabase');
+      } else {
+        let { error } = await supabase
+          .from('operadores')
+          .insert([{
+            nome: formData.nome.trim(),
+            status: formData.status || 'ATIVO',
+            ativo: formData.status === 'ATIVO',
+            maquinas_autorizadas: formData.maquinasAutorizadas || ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4']
+          }]);
+
+        if (error && error.code === 'PGRST205') {
+          // Fallback para usuarios
+          const { error: usrErr } = await supabase
+            .from('usuarios')
+            .insert([{
+              nome: formData.nome.trim(),
+              usuario: formData.nome.toLowerCase().replace(/\s+/g, ''),
+              senha: '123',
+              tipo: 'OPERADOR',
+              maquina: formData.maquinasAutorizadas?.[0] || 'MAQUINA 1'
+            }]);
+          if (usrErr) throw usrErr;
+        } else if (error) {
+          throw error;
+        }
+
+        toast.success('Operador cadastrado no Supabase');
+      }
+      setIsModalOpen(false);
+      await carregarOperadores();
+    } catch (err: any) {
+      console.warn('Aviso ao salvar operador:', err);
+      toast.error(`Erro ao salvar no Supabase: ${err.message || 'Falha na gravação'}`);
     }
-    setIsModalOpen(false);
   };
 
-  const handleDelete = (id: string) => {
-    if (window.confirm('Deseja realmente excluir este registro?')) {
-      deleteOperador(id);
-      toast.success('Operador excluído');
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Deseja realmente excluir este operador do Supabase?')) {
+      try {
+        let { error } = await supabase
+          .from('operadores')
+          .delete()
+          .eq('id', id);
+
+        if (error && error.code === 'PGRST205') {
+          const { error: usrErr } = await supabase
+            .from('usuarios')
+            .delete()
+            .eq('id', id);
+          if (usrErr) throw usrErr;
+        } else if (error) {
+          throw error;
+        }
+
+        toast.success('Operador excluído do Supabase');
+        await carregarOperadores();
+      } catch (err: any) {
+        console.warn('Aviso ao excluir operador:', err);
+        toast.error(`Erro ao excluir no Supabase: ${err.message || 'Falha ao excluir'}`);
+      }
     }
   };
 
@@ -112,9 +245,46 @@ export default function Operadores() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {filteredOperadores.map(op => (
-          <div key={op.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-colors">
+      {dbError && (
+        <div className="bg-amber-950/40 border border-amber-500/40 rounded-2xl p-5 text-amber-200">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-2">
+              <h3 className="font-bold text-amber-300">Tabela de Operadores no Supabase</h3>
+              <p className="text-sm text-amber-200/90 leading-relaxed">
+                {dbError.includes('schema cache') || dbError.includes('not find')
+                  ? 'A tabela public.operadores ainda precisa ser criada no Supabase SQL Editor. O script completo de migração já foi gerado em supabase/migrations/20260922_create_operadores.sql com suporte a Realtime.'
+                  : `Erro de comunicação com o Supabase: ${dbError}`}
+              </p>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => carregarOperadores()}
+                  className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-12 text-center">
+          <RefreshCw className="w-8 h-8 text-blue-400 animate-spin mx-auto mb-3" />
+          <p className="text-neutral-400 text-sm font-medium">Carregando operadores do Supabase...</p>
+        </div>
+      ) : filteredOperadores.length === 0 ? (
+        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-12 text-center">
+          <p className="text-neutral-400 font-medium">Nenhum operador cadastrado.</p>
+          <p className="text-neutral-500 text-xs mt-1">Clique em "Novo Operador" para cadastrar.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {filteredOperadores.map(op => (
+            <div key={op.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-colors">
             {(() => {
               const stats = getOpStats(op.id);
               return (
@@ -162,7 +332,7 @@ export default function Operadores() {
             })()}
           </div>
         ))}
-      </div>
+      </div>)}
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 overflow-y-auto">

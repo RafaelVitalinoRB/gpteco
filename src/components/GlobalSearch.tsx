@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, User, FileText, Package, Hash, X } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { useOperadores } from '../hooks/useOperadores';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import RoloDetailsModal from './RoloDetailsModal';
@@ -15,7 +16,8 @@ export default function GlobalSearch() {
   }>({ clientes: [], ops: [], rolos: [], nfs: [] });
   const [isOpen, setIsOpen] = useState(false);
   const [selectedRoloId, setSelectedRoloId] = useState<string | null>(null);
-  const { clientes, ops, rolos, entradas, saidas, operadores } = useStore();
+  const { clientes, ops, rolos, entradas, saidas } = useStore();
+  const { operadores } = useOperadores();
   const navigate = useNavigate();
   const searchRef = useRef<HTMLDivElement>(null);
 

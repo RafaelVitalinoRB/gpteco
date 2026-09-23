@@ -23,7 +23,6 @@ interface AppState {
   especificacoes: Especificacao[];
   ops: OP[];
   rolos: Rolo[];
-  operadores: Operador[];
   entradas: Entrada[];
   saidas: Saida[];
   eventosProducao: EventoProducao[];
@@ -57,12 +56,9 @@ interface AppState {
   deleteOP: (id: string) => void;
 
   // Rolos
+  addRolo: (rolo: Rolo) => void;
   updateRolo: (id: string, rolo: Partial<Rolo>) => void;
-
-  // Operadores
-  addOperador: (op: Operador) => void;
-  updateOperador: (id: string, op: Partial<Operador>) => void;
-  deleteOperador: (id: string) => void;
+  setRolos: (rolos: Rolo[]) => void;
 
   // Eventos de Produção
   addEventoProducao: (evento: EventoProducao) => void;
@@ -77,6 +73,9 @@ interface AppState {
 
   // Roletes
   addMovimentoRolete: (mov: MovimentoRolete) => void;
+
+  // Reset Operacional
+  resetOperacional: () => void;
 }
 
 export const useStore = create<AppState>()(
@@ -92,7 +91,6 @@ export const useStore = create<AppState>()(
       especificacoes: [],
       ops: [],
       rolos: [],
-      operadores: [],
       entradas: [],
       saidas: [],
       eventosProducao: [],
@@ -158,18 +156,13 @@ export const useStore = create<AppState>()(
       })),
 
       // ROLOS
+      addRolo: (rolo) => set((state) => ({
+        rolos: [rolo, ...state.rolos.filter(r => r.id !== rolo.id && r.numeroRolo !== rolo.numeroRolo)]
+      })),
       updateRolo: (id, rolo) => set((state) => ({
         rolos: state.rolos.map(r => r.id === id ? { ...r, ...rolo, updatedAt: new Date().toISOString() } : r)
       })),
-
-      // OPERADORES
-      addOperador: (op) => set((state) => ({ operadores: [...state.operadores, op] })),
-      updateOperador: (id, op) => set((state) => ({
-        operadores: state.operadores.map(o => o.id === id ? { ...o, ...op, updatedAt: new Date().toISOString() } : o)
-      })),
-      deleteOperador: (id) => set((state) => ({
-        operadores: state.operadores.filter(o => o.id !== id)
-      })),
+      setRolos: (rolos) => set({ rolos }),
 
       // EVENTOS
       addEventoProducao: (evento) => set((state) => ({
@@ -195,6 +188,15 @@ export const useStore = create<AppState>()(
       // ROLETES
       addMovimentoRolete: (mov) => set((state) => ({
         movimentosRoletes: [...state.movimentosRoletes, mov]
+      })),
+
+      // RESET OPERACIONAL (SPRINT ADMIN 1.0)
+      resetOperacional: () => set((state) => ({
+        ops: [],
+        rolos: [],
+        eventosProducao: [],
+        movimentosRoletes: [],
+        saidas: state.saidas.filter(s => s.tipoLancamento !== 'ROLETES' && !s.roloId && !s.opId)
       }))
     }),
     {

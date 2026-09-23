@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle, ArrowRight, X } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, ArrowRight, X, User } from 'lucide-react';
 import { OP, Cliente, Especificacao } from '../../types';
 
 interface ModalConferenciaProps {
@@ -12,6 +12,8 @@ interface ModalConferenciaProps {
   tipoFio?: string;
   especificacao?: Especificacao | null;
   maquina: string;
+  operadorNome?: string;
+  onSelectOperador?: () => void;
 }
 
 export const ModalConferencia: React.FC<ModalConferenciaProps> = ({
@@ -23,9 +25,13 @@ export const ModalConferencia: React.FC<ModalConferenciaProps> = ({
   tituloFio,
   tipoFio,
   especificacao,
-  maquina
+  maquina,
+  operadorNome,
+  onSelectOperador
 }) => {
   if (!isOpen || !op) return null;
+
+  const temOperador = Boolean(operadorNome && operadorNome.trim());
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200">
@@ -55,8 +61,8 @@ export const ModalConferencia: React.FC<ModalConferenciaProps> = ({
 
         {/* Parâmetros Críticos */}
         <div className="p-6 space-y-5 overflow-y-auto max-h-[65vh]">
-          {/* Identificação Geral */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
+          {/* Identificação Geral com Operador */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
                 Ordem de Produção
@@ -73,7 +79,7 @@ export const ModalConferencia: React.FC<ModalConferenciaProps> = ({
                 {maquina}
               </span>
             </div>
-            <div className="col-span-2 sm:col-span-1">
+            <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
                 Cliente
               </span>
@@ -81,7 +87,50 @@ export const ModalConferencia: React.FC<ModalConferenciaProps> = ({
                 {clienteNome}
               </span>
             </div>
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block mb-0.5">
+                Operador
+              </span>
+              {temOperador ? (
+                <span className="text-base font-black text-emerald-400 truncate block">
+                  {operadorNome}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onSelectOperador}
+                  className="text-xs font-black text-amber-400 hover:text-amber-300 underline block text-left"
+                >
+                  Selecionar operador...
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Alerta caso operador não esteja selecionado */}
+          {!temOperador && (
+            <div className="bg-amber-950/40 border-2 border-amber-500/50 rounded-2xl p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-amber-300">
+                    Operador não selecionado
+                  </h4>
+                  <p className="text-xs text-amber-200/80">
+                    A ordem de produção só pode ser iniciada após a seleção manual do operador.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onSelectOperador}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider transition-all flex items-center gap-1.5 flex-shrink-0"
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Selecionar Operador</span>
+              </button>
+            </div>
+          )}
 
           {/* Cards de Conferência Técnica */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -171,11 +220,30 @@ export const ModalConferencia: React.FC<ModalConferenciaProps> = ({
           </button>
           <button
             type="button"
-            onClick={onConfirm}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-emerald-900/30 transition-all active:scale-[0.99] flex items-center justify-center gap-2"
+            onClick={() => {
+              if (!temOperador) {
+                if (onSelectOperador) onSelectOperador();
+                return;
+              }
+              onConfirm();
+            }}
+            className={`w-full py-4 rounded-2xl text-white font-black text-sm uppercase tracking-wider shadow-lg transition-all flex items-center justify-center gap-2 ${
+              temOperador
+                ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 shadow-emerald-900/30 active:scale-[0.99]"
+                : "bg-amber-600 hover:bg-amber-500 shadow-amber-900/30"
+            }`}
           >
-            <CheckCircle2 className="w-5 h-5" />
-            <span>Confirmar e Iniciar</span>
+            {temOperador ? (
+              <>
+                <CheckCircle2 className="w-5 h-5" />
+                <span>Confirmar e Iniciar</span>
+              </>
+            ) : (
+              <>
+                <User className="w-5 h-5" />
+                <span>Selecionar Operador para Iniciar</span>
+              </>
+            )}
           </button>
         </div>
       </div>

@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useStore } from '../../store/useStore';
+import { useOperadores } from '../../hooks/useOperadores';
 import { FileText, Download, Calendar, TrendingUp, Users, Package, DollarSign } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function Relatorios() {
-  const { ops, rolos, entradas, saidas, clientes, operadores } = useStore();
+  const { ops, rolos, entradas, saidas, clientes } = useStore();
+  const { operadores } = useOperadores();
   const [startDate, setStartDate] = useState(format(new Date().setDate(1), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 

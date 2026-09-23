@@ -22,11 +22,17 @@ import Operadores from './pages/Programador/Operadores';
 // Operador
 import DashboardOperador from './pages/Operador/Dashboard';
 
+// Relatorios
 import Relatorios from './pages/Programador/Relatorios';
 import MaquinasProgramador from './pages/Programador/Maquinas';
 
+// Administracao
+import ResetOperacional from './pages/Administracao/ResetOperacional';
+
 // Escritorio
 import DashboardEscritorio from './pages/Escritorio/Dashboard';
+import ClientesEscritorio from './pages/Escritorio/Clientes/ClientesEscritorio';
+import { ClienteDetalhes } from './pages/Escritorio/Clientes/ClienteDetalhes';
 
 // Estoque
 import DashboardEstoque from './pages/Estoque/Dashboard';
@@ -108,6 +114,8 @@ export default function App() {
 
           {/* Escritorio Routes */}
           <Route path="/escritorio" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><DashboardEscritorio /></ProtectedRoute>} />
+          <Route path="/escritorio/clientes" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><ClientesEscritorio /></ProtectedRoute>} />
+          <Route path="/escritorio/clientes/:id" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><ClienteDetalhes /></ProtectedRoute>} />
 
           {/* Estoque Routes */}
           <Route path="/estoque" element={<ProtectedRoute allowedRoles={['ESTOQUE', 'PROGRAMADOR']}><DashboardEstoque /></ProtectedRoute>} />
@@ -117,6 +125,10 @@ export default function App() {
 
           {/* Relatorios Route */}
           <Route path="/programador/relatorios" element={<ProtectedRoute allowedRoles={['PROGRAMADOR']}><Relatorios /></ProtectedRoute>} />
+
+          {/* Administracao Routes (Sprint Admin 1.0) */}
+          <Route path="/administracao/reset-operacional" element={<ProtectedRoute allowedRoles={['PROGRAMADOR']}><ResetOperacional /></ProtectedRoute>} />
+          <Route path="/programador/reset-operacional" element={<ProtectedRoute allowedRoles={['PROGRAMADOR']}><ResetOperacional /></ProtectedRoute>} />
         </Route>
       </Routes>
     </Router>

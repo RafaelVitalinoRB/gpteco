@@ -1,13 +1,86 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
-import { Activity, Play, CheckCircle, Clock, X, TrendingUp, Users, Package, Scale } from 'lucide-react';
+import { useOperadores } from '../../hooks/useOperadores';
+import { Activity, Play, CheckCircle, Clock, X, TrendingUp, Users, Package, Scale, AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
 export default function DashboardProgramador() {
-  const { ops, rolos, clientes, operadores, eventosProducao } = useStore();
+  const { ops, rolos, clientes, eventosProducao } = useStore();
+  const { operadores } = useOperadores();
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
+  const [liveStatusMap, setLiveStatusMap] = useState<Record<string, any>>({});
 
   const maquinas = ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'];
+
+  // SPRINT 2.4.2: Sincronização em Tempo Real com o Painel do Operador
+  useEffect(() => {
+    // 1. Carregar estado salvo de cada máquina
+    const loadSavedStatus = () => {
+      const updated: Record<string, any> = {};
+      maquinas.forEach(m => {
+        try {
+          const raw = localStorage.getItem(`texlog_live_status_${m}`);
+          if (raw) {
+            updated[m] = JSON.parse(raw);
+          }
+        } catch {}
+      });
+      setLiveStatusMap(prev => ({ ...prev, ...updated }));
+    };
+
+    loadSavedStatus();
+
+    // 2. Ouvir canal BroadcastChannel do navegador (sincronização entre abas)
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('texlog_machine_channel');
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'RESET_OPERACIONAL') {
+          setLiveStatusMap({});
+          return;
+        }
+        if (event.data && event.data.maquina) {
+          setLiveStatusMap(prev => ({
+            ...prev,
+            [event.data.maquina]: event.data
+          }));
+        }
+      };
+    } catch {}
+
+    // 3. Ouvir Supabase Realtime Broadcast
+    const channel = supabase
+      .channel('producao_maquinas_realtime')
+      .on('broadcast', { event: 'machine_status_update' }, ({ payload }) => {
+        if (payload?.reset) {
+          setLiveStatusMap({});
+          return;
+        }
+        if (payload && payload.maquina) {
+          setLiveStatusMap(prev => ({
+            ...prev,
+            [payload.maquina]: payload
+          }));
+        }
+      })
+      .subscribe();
+
+    const handleResetEvent = () => {
+      setLiveStatusMap({});
+    };
+    window.addEventListener('texlog_reset_operacional', handleResetEvent);
+
+    // 4. Polling periódico a cada 2s para sincronização suave
+    const interval = setInterval(loadSavedStatus, 2000);
+
+    return () => {
+      clearInterval(interval);
+      if (bc) bc.close();
+      supabase.removeChannel(channel);
+      window.removeEventListener('texlog_reset_operacional', handleResetEvent);
+    };
+  }, []);
 
   const getMachineStats = (maquina: string) => {
     const today = new Date().toISOString().split('T')[0];
@@ -32,7 +105,15 @@ export default function DashboardProgramador() {
       tempoParado += r.faltaRoleteTempo || 0;
     });
 
-    const opAtiva = ops.find(op => op.maquina === maquina && op.status !== 'FINALIZADA');
+    const opAtiva = ops.find(op => {
+      if (op.maquina !== maquina) return false;
+      const status = (op.status || '').toUpperCase();
+      if (status === 'FINALIZADA' || status === 'AGUARDANDO_PESAGEM' || status === 'CANCELADA') return false;
+      const qPlan = Number(op.quantidade_planejada ?? op.qtdRolos ?? 1);
+      const qProd = Number(op.quantidade_produzida ?? 0);
+      if (qProd >= qPlan) return false;
+      return true;
+    });
     const cliente = opAtiva ? clientes.find(c => c.id === opAtiva.clienteId) : null;
     const roloAtivo = opAtiva ? rolos.find(r => r.opId === opAtiva.id && (r.status === 'EM_ANDAMENTO' || r.status === 'PARADO')) : null;
     
@@ -154,6 +235,7 @@ export default function DashboardProgramador() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {maquinas.map((maquina) => {
           const stats = getMachineStats(maquina);
+          const live = liveStatusMap[maquina];
           
           let statusColor = 'bg-neutral-800/50 border-neutral-800';
           let badgeColor = 'text-neutral-400 bg-neutral-800';
@@ -161,7 +243,40 @@ export default function DashboardProgramador() {
           let statusText = 'LIVRE';
           let isPulse = false;
 
-          if (stats.op) {
+          const isProduzindoLive = live?.status === 'PRODUZINDO';
+          const isAguardandoOP = live?.status === 'OPERADOR_SELECIONADO';
+          const isSetupLive = live?.status === 'OP_SELECIONADA' || live?.status === 'CONFERENCIA';
+          const isProxRoloLive = live?.status === 'PROXIMO_ROLO';
+          const isFinalizadaLive = live?.status === 'OP_FINALIZADA';
+
+          if (isProduzindoLive) {
+            statusColor = 'bg-emerald-500/10 border-emerald-500/30';
+            badgeColor = 'text-emerald-300 bg-emerald-500/20 border border-emerald-500/30 font-bold';
+            dotColor = 'bg-emerald-400';
+            statusText = 'PRODUZINDO';
+            isPulse = true;
+          } else if (isProxRoloLive) {
+            statusColor = 'bg-blue-500/10 border-blue-500/30';
+            badgeColor = 'text-blue-300 bg-blue-500/20 border border-blue-500/30 font-bold';
+            dotColor = 'bg-blue-400';
+            statusText = 'PRÓXIMO ROLO';
+            isPulse = true;
+          } else if (isSetupLive) {
+            statusColor = 'bg-yellow-500/10 border-yellow-500/30';
+            badgeColor = 'text-yellow-300 bg-yellow-500/20 border border-yellow-500/30 font-bold';
+            dotColor = 'bg-yellow-400';
+            statusText = 'CONFERÊNCIA';
+          } else if (isAguardandoOP) {
+            statusColor = 'bg-amber-500/10 border-amber-500/30';
+            badgeColor = 'text-amber-300 bg-amber-500/20 border border-amber-500/30 font-bold';
+            dotColor = 'bg-amber-400';
+            statusText = 'AGUARDANDO OP';
+          } else if (isFinalizadaLive) {
+            statusColor = 'bg-purple-500/10 border-purple-500/30';
+            badgeColor = 'text-purple-300 bg-purple-500/20 border border-purple-500/30 font-bold';
+            dotColor = 'bg-purple-400';
+            statusText = 'OP CONCLUÍDA';
+          } else if (stats.op) {
             if (stats.rolo?.status === 'EM_ANDAMENTO') {
               statusColor = 'bg-emerald-500/10 border-emerald-500/20';
               badgeColor = 'text-emerald-400 bg-emerald-400/10';
@@ -180,6 +295,11 @@ export default function DashboardProgramador() {
               statusText = 'SETUP';
             }
           }
+
+          // Operador ativo (preferência do live)
+          const operadorDisplay = live?.operadorNome || stats.operador?.nome;
+          const clienteDisplay = live?.clienteNome || stats.cliente?.nomeFantasia;
+          const opDisplay = live?.opCodigo ? `OP ${live.opCodigo}` : stats.op?.codigo;
 
           return (
             <div 
@@ -200,24 +320,71 @@ export default function DashboardProgramador() {
               </div>
 
               <div className="p-5 space-y-4 flex-1">
-                {stats.op ? (
+                {(isProduzindoLive || isSetupLive || stats.op) ? (
                   <>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-bold">Produção Atual</span>
-                      <p className="text-white font-bold leading-tight mt-0.5">{stats.cliente?.nomeFantasia}</p>
-                      <p className="text-blue-400 text-sm font-medium">{stats.op.tituloFio}</p>
+                      <p className="text-white font-bold leading-tight mt-0.5 truncate">{clienteDisplay || 'Cliente em Produção'}</p>
+                      <p className="text-blue-400 text-sm font-medium">{opDisplay}</p>
                     </div>
-                    {stats.operador && (
+
+                    {operadorDisplay && (
                       <div>
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-bold">Operador</span>
-                        <p className="text-white text-sm font-medium">{stats.operador.nome}</p>
+                        <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-bold">Operador em Linha</span>
+                        <p className="text-emerald-400 text-sm font-bold flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5" />
+                          {operadorDisplay}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Telemetria ao Vivo de Portadas e Tempo */}
+                    {isProduzindoLive && live && (
+                      <div className="bg-black/40 border border-emerald-500/20 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-neutral-400 font-bold uppercase text-[10px]">
+                            Portada {String(live.portadaAtual).padStart(2, '0')} de {String(live.totalPortadas).padStart(2, '0')}
+                          </span>
+                          <span className="font-mono text-emerald-400 font-black text-xs">
+                            {live.progressoPercentual}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-neutral-800 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                            style={{ width: `${live.progressoPercentual}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] font-mono text-neutral-400 pt-0.5">
+                          <span className="flex items-center gap-1 text-blue-400">
+                            <Clock className="w-3 h-3" />
+                            {live.tempoProducao || '00:00:00'}
+                          </span>
+                          {live.ocorrenciasCount > 0 && (
+                            <span className="flex items-center gap-1 text-amber-400 font-bold">
+                              <AlertTriangle className="w-3 h-3" />
+                              {live.ocorrenciasCount} oc.
+                            </span>
+                          )}
+                        </div>
                       </div>
                     )}
                   </>
+                ) : isAguardandoOP ? (
+                  <div className="py-3 space-y-2">
+                    <div>
+                      <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-bold">Operador Conectado</span>
+                      <p className="text-amber-400 text-sm font-bold flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5" />
+                        {operadorDisplay}
+                      </p>
+                    </div>
+                    <p className="text-xs text-neutral-400 italic">Aguardando seleção de Ordem de Produção...</p>
+                  </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-4 text-neutral-600">
                     <Clock className="w-6 h-6 mb-2 opacity-50" />
-                    <p className="text-xs uppercase font-bold tracking-widest">Livre</p>
+                    <p className="text-xs uppercase font-bold tracking-widest">Sem Operador</p>
                   </div>
                 )}
 
@@ -252,7 +419,7 @@ export default function DashboardProgramador() {
             <div className="p-6 border-b border-white/5 flex justify-between items-center">
               <div>
                 <h2 className="text-2xl font-black text-white tracking-tight uppercase">{selectedMachine}</h2>
-                <p className="text-neutral-500 text-xs font-bold uppercase tracking-widest mt-1">Resumo Gerencial Detalhado</p>
+                <p className="text-neutral-500 text-xs font-bold uppercase tracking-widest mt-1">Resumo Gerencial e Telemetria em Tempo Real</p>
               </div>
               <button 
                 onClick={() => setSelectedMachine(null)}
@@ -265,6 +432,7 @@ export default function DashboardProgramador() {
             <div className="flex-1 overflow-y-auto p-6 space-y-8">
               {(() => {
                 const stats = getMachineStats(selectedMachine);
+                const live = liveStatusMap[selectedMachine];
                 
                 // Produção Períodos
                 const calculatePeriodProd = (days: number) => {
@@ -289,38 +457,65 @@ export default function DashboardProgramador() {
                 const prodSemana = calculatePeriodProd(7);
                 const prodMes = calculatePeriodProd(30);
 
+                const clienteNome = live?.clienteNome || stats.cliente?.nomeFantasia;
+                const opCodigo = live?.opCodigo || stats.op?.codigo;
+                const operadorNome = live?.operadorNome || stats.operador?.nome;
+
                 return (
                   <div className="space-y-8">
-                    {/* Linha de Status Atual */}
-                    {stats.op ? (
-                      <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-6">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                          <span className="text-emerald-500 text-[10px] font-black uppercase tracking-widest">Produção em Curso</span>
+                    {/* Linha de Status Atual com Telemetria ao Vivo */}
+                    {(live?.status === 'PRODUZINDO' || stats.op) ? (
+                      <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                            <span className="text-emerald-400 text-xs font-black uppercase tracking-widest">
+                              {live?.status === 'PRODUZINDO' ? 'Produção Ativa (Ao Vivo)' : 'Produção em Curso'}
+                            </span>
+                          </div>
+                          {live?.tempoProducao && (
+                            <span className="font-mono text-sm font-black text-blue-400 bg-black/40 px-3 py-1 rounded-lg border border-white/5">
+                              Tempo: {live.tempoProducao}
+                            </span>
+                          )}
                         </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                           <div>
                             <span className="text-neutral-500 text-[9px] font-black uppercase block mb-1">Cliente</span>
-                            <p className="text-white font-bold">{stats.cliente?.nomeFantasia}</p>
+                            <p className="text-white font-bold">{clienteNome || 'Cliente'}</p>
                           </div>
                           <div>
                             <span className="text-neutral-500 text-[9px] font-black uppercase block mb-1">OP / Fio</span>
-                            <p className="text-white font-bold">{stats.op.codigo}</p>
-                            <p className="text-blue-400 text-xs font-bold uppercase">{stats.op.tituloFio}</p>
+                            <p className="text-white font-bold">{opCodigo || 'OP'}</p>
+                            <p className="text-blue-400 text-xs font-bold uppercase">{live?.tituloFio || stats.op?.tituloFio || '—'}</p>
                           </div>
                           <div>
-                            <span className="text-neutral-500 text-[9px] font-black uppercase block mb-1">Rolo / Progress</span>
-                            <p className="text-white font-bold">{stats.rolo?.numeroRolo || '?' } de {stats.op.qtdRolos}</p>
+                            <span className="text-neutral-500 text-[9px] font-black uppercase block mb-1">Rolo / Portadas</span>
+                            <p className="text-white font-bold">{live?.roloAtual || `${stats.rolo?.numeroRolo || '1'} de ${stats.op?.qtdRolos || 1}`}</p>
+                            {live && (
+                              <p className="text-emerald-400 text-xs font-bold font-mono">
+                                Portada {live.portadaAtual} / {live.totalPortadas} ({live.progressoPercentual}%)
+                              </p>
+                            )}
                           </div>
                           <div>
                             <span className="text-neutral-500 text-[9px] font-black uppercase block mb-1">Operador Atual</span>
-                            <p className="text-emerald-400 font-bold">{stats.operador?.nome || 'NÃO IDENTIFICADO'}</p>
+                            <p className="text-emerald-400 font-bold">{operadorNome || 'NÃO IDENTIFICADO'}</p>
                           </div>
                         </div>
                       </div>
+                    ) : live?.status === 'OPERADOR_SELECIONADO' ? (
+                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-6 flex items-center justify-between">
+                        <div>
+                          <span className="text-amber-400 text-xs font-black uppercase tracking-widest block mb-1">Operador Conectado</span>
+                          <p className="text-white text-lg font-bold">{operadorNome}</p>
+                        </div>
+                        <span className="text-neutral-400 text-xs italic">Aguardando seleção de Ordem de Produção</span>
+                      </div>
                     ) : (
                       <div className="bg-neutral-900 border border-white/5 rounded-2xl p-10 text-center">
-                        <p className="text-neutral-600 font-black uppercase tracking-widest text-sm">Máquina em Standby - Nenhuma OP ativa</p>
+                        <p className="text-neutral-600 font-black uppercase tracking-widest text-sm">Máquina em Standby - Sem operador ativo</p>
                       </div>
                     )}
 

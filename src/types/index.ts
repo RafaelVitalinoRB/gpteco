@@ -103,21 +103,41 @@ export interface OP {
   portadasPrevistas?: number;
   observacoesProducao?: string;
   maquinaPreparacao?: string;
-  status: 'PENDENTE' | 'PREPARANDO' | 'EM_ANDAMENTO' | 'FINALIZADA' | 'PARADA';
+  quantidade_planejada?: number;
+  quantidade_produzida?: number;
+  quantidade_pendente?: number;
+  status: 'PENDENTE' | 'PREPARANDO' | 'EM_ANDAMENTO' | 'AGUARDANDO_PESAGEM' | 'FINALIZADA' | 'PARADA' | 'CANCELADA';
   createdAt: string;
   updatedAt: string;
   fim?: string;
 }
+
+export type RoloStatus = 
+  | 'PENDENTE' 
+  | 'EM_PRODUCAO'
+  | 'AGUARDANDO_REVISAO'
+  | 'RETIRADA_EM_ANDAMENTO'
+  | 'AGUARDANDO_PESAGEM'
+  | 'PESADO'
+  | 'EM_ESTOQUE'
+  | 'ROMANEADO'
+  | 'FATURADO'
+  | 'CANCELADO'
+  | 'EM_ANDAMENTO' 
+  | 'FINALIZADO' 
+  | 'PARADO';
 
 export interface Rolo {
   id: string;
   opId: string;
   sequencia: number;
   numeroRolo: string | number;
-  status: 'PENDENTE' | 'EM_ANDAMENTO' | 'FINALIZADO' | 'PARADO';
+  status: RoloStatus;
   portadasTotal: number;
   pesoEstimadoKg: number;
   pesoRealKg?: number;
+  pesoBrutoKg?: number;
+  taraKg?: number;
   iniciadoEm?: string;
   finalizadoEm?: string;
   createdAt: string;
@@ -125,6 +145,26 @@ export interface Rolo {
   operadores: { operadorId: string; portadas: number; data?: string }[];
   faltaRoleteTempo: number; // em minutos
   faltaRoleteInicio?: string;
+  opCodigo?: string;
+  clienteNome?: string;
+  maquina?: string;
+  operadorNome?: string;
+  observacoes?: string;
+}
+
+export type FaseOcorrencia = 'PRODUCAO' | 'RETIRADA';
+
+export interface RoloOcorrencia {
+  id?: string;
+  rolo_id?: string | number;
+  numero_rolo: string;
+  fase_ocorrencia: FaseOcorrencia;
+  ocorrencia: string;
+  portada?: number;
+  horario?: string;
+  operador_id?: string;
+  operador_nome?: string;
+  criado_em?: string;
 }
 
 export interface Operador {
@@ -138,6 +178,14 @@ export interface Operador {
 
 export type EventoTipo = 
   | 'INICIO_PRODUCAO'
+  | 'PRODUCAO_INICIADA'
+  | 'PRODUCAO_CONCLUIDA'
+  | 'REVISAO_REALIZADA'
+  | 'RETIRADA_INICIADA'
+  | 'RETIRADA_CONCLUIDA'
+  | 'AGUARDANDO_PESAGEM'
+  | 'OCORRENCIA_PRODUCAO'
+  | 'OCORRENCIA_RETIRADA'
   | 'TROCA_OPERADOR'
   | 'FALTA_ROLETE'
   | 'RETOMADA_PRODUCAO'

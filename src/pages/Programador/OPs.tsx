@@ -135,6 +135,15 @@ export default function OPs() {
 
   useEffect(() => {
     fetchData();
+
+    const handleResetEvent = () => {
+      fetchData();
+    };
+    window.addEventListener('texlog_reset_operacional', handleResetEvent);
+
+    return () => {
+      window.removeEventListener('texlog_reset_operacional', handleResetEvent);
+    };
   }, []);
 
   const [formData, setFormData] = useState<Partial<OP>>({
