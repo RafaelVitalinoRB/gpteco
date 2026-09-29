@@ -5,30 +5,232 @@ import {
   Users, 
   FileText, 
   Settings, 
-  LogOut,
-  Package,
-  ArrowRightLeft,
-  DollarSign,
-  Menu,
-  X,
-  Play,
-  BarChart3,
-  RotateCcw
+  LogOut, 
+  Package, 
+  ArrowRightLeft, 
+  DollarSign, 
+  Menu, 
+  X, 
+  Play, 
+  BarChart3, 
+  RotateCcw, 
+  FileSpreadsheet, 
+  Building2, 
+  Scale,
+  Truck,
+  Cpu,
+  Receipt,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Layers,
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Calendar,
+  CheckCircle2,
+  TrendingUp,
+  Wallet,
+  UserCheck,
+  ShieldCheck,
+  Database,
+  Printer,
+  Sliders
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import GlobalSearch from './GlobalSearch';
 
+interface SubmenuItem {
+  id: string;
+  name: string;
+  icon: any;
+  badge?: number;
+  alert?: boolean;
+}
+
+interface GrupoEscritorio {
+  id: string;
+  moduloParam: string;
+  numero: string;
+  name: string;
+  badgeCor: string;
+  corText: string;
+  corBgHover: string;
+  corBorderActive: string;
+  corHeaderBg: string;
+  icon: any;
+  submenus: SubmenuItem[];
+}
+
 export default function Layout() {
-  const { user, logout } = useStore();
+  const { user, logout, rolos } = useStore();
   const location = useLocation();
   const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [openGrupos, setOpenGrupos] = useState<Record<string, boolean>>({
+    expedicao: true,
+    producao: false,
+    financeiro: false,
+    configuracoes: false
+  });
+
+  // Query params da rota atual
+  const searchParams = new URLSearchParams(location.search);
+  const currentModulo = (searchParams.get('modulo') || (location.pathname.includes('/empresa') ? 'configuracoes' : location.pathname.includes('/clientes') ? 'configuracoes' : location.pathname.includes('/importacoes') ? 'configuracoes' : 'expedicao')).toLowerCase();
+  const currentSub = (searchParams.get('sub') || (location.pathname.includes('/empresa') ? 'empresa' : location.pathname.includes('/clientes') ? 'clientes' : location.pathname.includes('/importacoes') ? 'importacoes' : '')).toLowerCase();
+
+  // Contadores em tempo real para badges
+  const [pesagemCount, setPesagemCount] = useState<number>(0);
+  const [faturamentoCount, setFaturamentoCount] = useState<number>(0);
+
+  useEffect(() => {
+    const atualizarContagens = () => {
+      let countP = rolos.filter(r => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
+      try {
+        const raw = localStorage.getItem('texlog_historico_rolos_produzidos');
+        if (raw) {
+          const list = JSON.parse(raw);
+          countP = list.filter((r: any) => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
+        }
+      } catch {}
+      setPesagemCount(countP);
+
+      try {
+        const rawRom = localStorage.getItem('texlog_romaneios_emitidos');
+        if (rawRom) {
+          const listRom = JSON.parse(rawRom);
+          const pendentes = listRom.filter((r: any) => r.status === 'PENDENTE_FATURAMENTO' || !r.status);
+          setFaturamentoCount(pendentes.length);
+        }
+      } catch {}
+    };
+
+    atualizarContagens();
+    window.addEventListener('texlog_rolo_pesado', atualizarContagens);
+    window.addEventListener('texlog_novo_rolo_pesagem', atualizarContagens);
+    window.addEventListener('texlog_faturamento_updated', atualizarContagens);
+    window.addEventListener('storage', atualizarContagens);
+
+    return () => {
+      window.removeEventListener('texlog_rolo_pesado', atualizarContagens);
+      window.removeEventListener('texlog_novo_rolo_pesagem', atualizarContagens);
+      window.removeEventListener('texlog_faturamento_updated', atualizarContagens);
+      window.removeEventListener('storage', atualizarContagens);
+    };
+  }, [rolos]);
+
+  // Expandir automaticamente o grupo atual
+  useEffect(() => {
+    if (currentModulo) {
+      setOpenGrupos(prev => ({
+        ...prev,
+        [currentModulo]: true
+      }));
+    }
+  }, [currentModulo]);
+
+  const toggleGrupo = (grupoId: string) => {
+    setOpenGrupos(prev => ({
+      ...prev,
+      [grupoId]: !prev[grupoId]
+    }));
+  };
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+
+  // Estrutura Escritório 3.0: 4 Grupos Principais
+  const gruposEscritorio: GrupoEscritorio[] = [
+    {
+      id: 'producao',
+      moduloParam: 'producao',
+      numero: '1️⃣',
+      name: 'PRODUÇÃO',
+      badgeCor: '🔵',
+      corText: 'text-blue-400',
+      corBgHover: 'hover:bg-blue-500/10',
+      corBorderActive: 'border-blue-500/30 bg-blue-500/10 text-blue-300 font-bold',
+      corHeaderBg: 'bg-blue-950/20 border-blue-500/30 text-blue-400',
+      icon: Cpu,
+      submenus: [
+        { id: 'painel-maquinas', name: 'Painel das Máquinas', icon: Cpu },
+        { id: 'em-andamento', name: 'Produções em Andamento', icon: Play },
+        { id: 'aguardando-retirada', name: 'Rolos Aguardando Retirada', icon: Clock },
+        { id: 'aguardando-pesagem', name: 'Rolos Aguardando Pesagem', icon: Scale, badge: pesagemCount, alert: pesagemCount > 0 },
+        { id: 'historico-producao', name: 'Histórico de Produção', icon: Layers },
+        { id: 'ocorrencias', name: 'Ocorrências', icon: AlertTriangle }
+      ]
+    },
+    {
+      id: 'expedicao',
+      moduloParam: 'expedicao',
+      numero: '2️⃣',
+      name: 'EXPEDIÇÃO',
+      badgeCor: '🟢',
+      corText: 'text-emerald-400',
+      corBgHover: 'hover:bg-emerald-500/10',
+      corBorderActive: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-bold',
+      corHeaderBg: 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400',
+      icon: Truck,
+      submenus: [
+        { id: 'entrada-fios', name: 'Entrada de Fios', icon: ArrowDownRight },
+        { id: 'saida-fios', name: 'Saída de Fios', icon: ArrowUpRight },
+        { id: 'pesagem', name: 'Pesagem', icon: Scale, badge: pesagemCount, alert: pesagemCount > 0 },
+        { id: 'estoque-rolos', name: 'Estoque de Rolos', icon: Package },
+        { id: 'expedicoes', name: 'Expedições', icon: Truck },
+        { id: 'romaneios', name: 'Romaneios', icon: FileText },
+        { id: 'historico-expedicoes', name: 'Histórico de Expedições', icon: Receipt }
+      ]
+    },
+    {
+      id: 'financeiro',
+      moduloParam: 'financeiro',
+      numero: '3️⃣',
+      name: 'FATURAMENTO / FINANCEIRO',
+      badgeCor: '🟣',
+      corText: 'text-purple-400',
+      corBgHover: 'hover:bg-purple-500/10',
+      corBorderActive: 'border-purple-500/30 bg-purple-500/10 text-purple-300 font-bold',
+      corHeaderBg: 'bg-purple-950/20 border-purple-500/30 text-purple-400',
+      icon: DollarSign,
+      submenus: [
+        { id: 'faturamentos', name: 'Faturamentos', icon: Receipt, badge: faturamentoCount, alert: faturamentoCount > 0 },
+        { id: 'contas-receber', name: 'Contas a Receber', icon: ArrowDownRight },
+        { id: 'contas-pagar', name: 'Contas a Pagar', icon: ArrowUpRight },
+        { id: 'parcelas', name: 'Parcelas', icon: Calendar },
+        { id: 'recebimentos', name: 'Recebimentos', icon: CheckCircle2 },
+        { id: 'fluxo-caixa', name: 'Fluxo de Caixa', icon: TrendingUp },
+        { id: 'despesas', name: 'Despesas da Empresa', icon: Wallet }
+      ]
+    },
+    {
+      id: 'configuracoes',
+      moduloParam: 'configuracoes',
+      numero: '4️⃣',
+      name: 'CONFIGURAÇÕES',
+      badgeCor: '⚙',
+      corText: 'text-neutral-400',
+      corBgHover: 'hover:bg-neutral-800',
+      corBorderActive: 'border-neutral-600 bg-neutral-800 text-white font-bold',
+      corHeaderBg: 'bg-neutral-800/40 border-neutral-700 text-neutral-300',
+      icon: Sliders,
+      submenus: [
+        { id: 'empresa', name: 'Empresa', icon: Building2 },
+        { id: 'clientes', name: 'Clientes', icon: Users },
+        { id: 'operadores', name: 'Operadores', icon: UserCheck },
+        { id: 'maquinas', name: 'Máquinas', icon: Cpu },
+        { id: 'especificacoes', name: 'Especificações', icon: FileText },
+        { id: 'usuarios', name: 'Usuários', icon: ShieldCheck },
+        { id: 'importacoes', name: 'Importações', icon: FileSpreadsheet },
+        { id: 'backup', name: 'Backup', icon: Database },
+        { id: 'impressoes', name: 'Impressões', icon: Printer },
+        { id: 'parametros', name: 'Parâmetros Gerais', icon: Sliders }
+      ]
+    }
+  ];
 
   const getNavItems = () => {
     switch (user?.role) {
@@ -50,11 +252,6 @@ export default function Layout() {
         return [
           { name: 'Minha Máquina', path: '/operador', icon: LayoutDashboard },
         ];
-      case 'ESCRITORIO':
-        return [
-          { name: 'Dashboard', path: '/escritorio', icon: LayoutDashboard },
-          { name: 'Clientes', path: '/escritorio/clientes', icon: Users },
-        ];
       case 'ESTOQUE':
         return [
           { name: 'Dashboard', path: '/estoque', icon: Package },
@@ -69,71 +266,152 @@ export default function Layout() {
   };
 
   const navItems = getNavItems();
+  const isEscritorioRole = user?.role === 'ESCRITORIO';
 
   return (
     <div className="min-h-screen bg-neutral-950 flex">
       {/* Sidebar Desktop */}
       <aside className="hidden md:flex flex-col w-64 bg-neutral-900 border-r border-neutral-800">
-        <div className="p-6 flex items-center gap-3">
+        <div className="p-5 flex items-center gap-3 border-b border-neutral-800/80">
           <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <span className="text-white font-bold text-xl">T</span>
+            <span className="text-white font-black text-xl">T</span>
           </div>
           <div>
             <h1 className="text-xl font-bold text-white tracking-tight">Texlog</h1>
-            <p className="text-xs text-neutral-400">{user?.role}</p>
+            <p className="text-[11px] font-mono text-neutral-400 font-bold uppercase tracking-wider">{user?.role}</p>
           </div>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 mt-4">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 rounded-xl transition-colors",
-                  isActive 
-                    ? "bg-blue-600/10 text-blue-500 font-medium" 
-                    : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                )}
-              >
-                <Icon className="w-5 h-5" />
-                {item.name}
-              </Link>
-            );
-          })}
-
-          {user?.role === 'PROGRAMADOR' && (
-            <div className="pt-3 mt-3 border-t border-neutral-800/80">
-              <div className="px-4 mb-2 text-[11px] font-semibold tracking-wider text-neutral-500 uppercase flex items-center justify-between">
-                <span>Administração</span>
-                <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-mono">ADMIN</span>
+        <nav className="flex-1 px-3 py-4 space-y-3 overflow-y-auto">
+          
+          {/* MODO ESCRITÓRIO: 4 GRUPOS PRINCIPAIS */}
+          {isEscritorioRole ? (
+            <div className="space-y-3">
+              <div className="px-2 pb-1 text-[10px] font-mono font-black uppercase tracking-wider text-neutral-500">
+                Processos do Escritório
               </div>
-              <Link
-                to="/administracao/reset-operacional"
-                className={cn(
-                  "flex items-center gap-3 px-4 py-3 rounded-xl transition-colors",
-                  location.pathname === "/administracao/reset-operacional"
-                    ? "bg-red-500/10 text-red-400 font-medium border border-red-500/20"
-                    : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                )}
-              >
-                <RotateCcw className="w-5 h-5 text-red-400" />
-                Reset Operacional
-              </Link>
+
+              {gruposEscritorio.map(grupo => {
+                const isOpen = openGrupos[grupo.id];
+                const isGroupActive = currentModulo === grupo.id;
+
+                return (
+                  <div key={grupo.id} className="rounded-2xl overflow-hidden border border-neutral-800/80 bg-neutral-950/40">
+                    {/* Header do Grupo com Identidade Visual Padronizada */}
+                    <button
+                      type="button"
+                      onClick={() => toggleGrupo(grupo.id)}
+                      className={cn(
+                        "w-full px-3 py-2.5 flex items-center justify-between transition-colors text-xs font-bold text-left cursor-pointer",
+                        isGroupActive ? grupo.corHeaderBg : "hover:bg-neutral-800/60 text-neutral-300"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-xs">{grupo.badgeCor}</span>
+                        <span className="truncate tracking-tight font-black">{grupo.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {grupo.submenus.some(s => s.badge && s.badge > 0) && (
+                          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                        )}
+                        {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-neutral-400" /> : <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />}
+                      </div>
+                    </button>
+
+                    {/* Submenus Expansíveis */}
+                    {isOpen && (
+                      <div className="p-1 space-y-0.5 bg-neutral-900/60">
+                        {grupo.submenus.map(sub => {
+                          const SubIcon = sub.icon;
+                          const isSubActive = isGroupActive && (currentSub === sub.id || (!currentSub && sub.id === grupo.submenus[0].id));
+
+                          return (
+                            <Link
+                              key={sub.id}
+                              to={`/escritorio?modulo=${grupo.moduloParam}&sub=${sub.id}`}
+                              className={cn(
+                                "flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[11px] transition-all",
+                                isSubActive
+                                  ? grupo.corBorderActive
+                                  : cn("text-neutral-400 hover:text-white", grupo.corBgHover)
+                              )}
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <SubIcon className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{sub.name}</span>
+                              </div>
+                              {typeof sub.badge === 'number' && sub.badge > 0 && (
+                                <span className={cn(
+                                  "px-1.5 py-0.2 rounded-full text-[9px] font-mono font-black shrink-0",
+                                  sub.alert ? "bg-amber-500 text-black font-bold" : "bg-neutral-800 text-neutral-300"
+                                )}>
+                                  {sub.badge}
+                                </span>
+                              )}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+          ) : (
+            /* DEMAIS ROLES (Programador, Operador, Estoque, Financeiro) */
+            <>
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3 rounded-xl transition-colors",
+                      isActive 
+                        ? "bg-blue-600/10 text-blue-500 font-medium" 
+                        : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                    )}
+                  >
+                    <Icon className="w-5 h-5" />
+                    {item.name}
+                  </Link>
+                );
+              })}
+
+              {user?.role === 'PROGRAMADOR' && (
+                <div className="pt-3 mt-3 border-t border-neutral-800/80">
+                  <div className="px-4 mb-2 text-[11px] font-semibold tracking-wider text-neutral-500 uppercase flex items-center justify-between">
+                    <span>Administração</span>
+                    <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-mono">ADMIN</span>
+                  </div>
+                  <Link
+                    to="/administracao/reset-operacional"
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3 rounded-xl transition-colors",
+                      location.pathname === "/administracao/reset-operacional"
+                        ? "bg-red-500/10 text-red-400 font-medium border border-red-500/20"
+                        : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                    )}
+                  >
+                    <RotateCcw className="w-5 h-5 text-red-400" />
+                    Reset Operacional
+                  </Link>
+                </div>
+              )}
+            </>
           )}
+
         </nav>
 
         <div className="p-4 border-t border-neutral-800">
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 px-4 py-3 w-full text-neutral-400 hover:bg-red-500/10 hover:text-red-500 rounded-xl transition-colors"
+            className="flex items-center gap-3 px-4 py-3 w-full text-neutral-400 hover:bg-red-500/10 hover:text-red-500 rounded-xl transition-colors cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
-            Sair
+            <span>Sair</span>
           </button>
         </div>
       </aside>
@@ -153,48 +431,60 @@ export default function Layout() {
 
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 top-16 bg-neutral-900 z-40 flex flex-col">
-          <nav className="flex-1 px-4 py-6 space-y-2">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = location.pathname === item.path;
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-4 rounded-xl transition-colors text-lg",
-                    isActive 
-                      ? "bg-blue-600/10 text-blue-500 font-medium" 
-                      : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                  )}
-                >
-                  <Icon className="w-6 h-6" />
-                  {item.name}
-                </Link>
-              );
-            })}
-
-            {user?.role === 'PROGRAMADOR' && (
-              <div className="pt-4 mt-2 border-t border-neutral-800">
-                <div className="px-4 mb-2 text-xs font-semibold tracking-wider text-neutral-500 uppercase">
-                  Administração
+        <div className="md:hidden fixed inset-0 top-16 bg-neutral-900 z-40 flex flex-col overflow-y-auto">
+          <nav className="flex-1 px-4 py-6 space-y-3">
+            {isEscritorioRole ? (
+              <div className="space-y-3">
+                <div className="px-2 text-xs font-mono font-bold uppercase text-neutral-500">
+                  Processos do Escritório 3.0
                 </div>
-                <Link
-                  to="/administracao/reset-operacional"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-4 rounded-xl transition-colors text-lg",
-                    location.pathname === "/administracao/reset-operacional"
-                      ? "bg-red-500/10 text-red-400 font-medium" 
-                      : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                  )}
-                >
-                  <RotateCcw className="w-6 h-6 text-red-400" />
-                  Reset Operacional
-                </Link>
+                {gruposEscritorio.map(grupo => (
+                  <div key={grupo.id} className="rounded-xl border border-neutral-800 overflow-hidden bg-neutral-950/50">
+                    <div className={cn("p-3 font-bold text-sm flex items-center gap-2", grupo.corHeaderBg)}>
+                      <span>{grupo.badgeCor}</span>
+                      <span>{grupo.name}</span>
+                    </div>
+                    <div className="p-2 space-y-1">
+                      {grupo.submenus.map(sub => (
+                        <Link
+                          key={sub.id}
+                          to={`/escritorio?modulo=${grupo.moduloParam}&sub=${sub.id}`}
+                          onClick={() => setIsMobileMenuOpen(false)}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800"
+                        >
+                          <span>{sub.name}</span>
+                          {typeof sub.badge === 'number' && sub.badge > 0 && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500 text-black font-bold">
+                              {sub.badge}
+                            </span>
+                          )}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
+            ) : (
+              navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-4 rounded-xl transition-colors text-lg",
+                      isActive 
+                        ? "bg-blue-600/10 text-blue-500 font-medium" 
+                        : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                    )}
+                  >
+                    <Icon className="w-6 h-6" />
+                    {item.name}
+                  </Link>
+                );
+              })
             )}
           </nav>
           <div className="p-6 border-t border-neutral-800">

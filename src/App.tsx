@@ -8,6 +8,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { useStore } from './store/useStore';
 import { generateSpecKey } from './lib/utils';
+import { fetchClientesOficiais } from './services/clienteService';
 import Login from './pages/Login';
 import Layout from './components/Layout';
 
@@ -31,8 +32,10 @@ import ResetOperacional from './pages/Administracao/ResetOperacional';
 
 // Escritorio
 import DashboardEscritorio from './pages/Escritorio/Dashboard';
+import EmpresaEscritorio from './pages/Escritorio/Empresa';
 import ClientesEscritorio from './pages/Escritorio/Clientes/ClientesEscritorio';
 import { ClienteDetalhes } from './pages/Escritorio/Clientes/ClienteDetalhes';
+import ImportacoesEscritorio from './pages/Escritorio/Importacoes';
 
 // Estoque
 import DashboardEstoque from './pages/Estoque/Dashboard';
@@ -52,6 +55,12 @@ export default function App() {
   const especificacoes = useStore(state => state.especificacoes);
   const clientes = useStore(state => state.clientes);
   const updateEspecificacao = useStore(state => state.updateEspecificacao);
+
+  React.useEffect(() => {
+    fetchClientesOficiais().catch(err => {
+      console.warn('Inicialização dos clientes oficiais:', err);
+    });
+  }, []);
 
   React.useEffect(() => {
     especificacoes.forEach(esp => {
@@ -114,8 +123,12 @@ export default function App() {
 
           {/* Escritorio Routes */}
           <Route path="/escritorio" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><DashboardEscritorio /></ProtectedRoute>} />
+          <Route path="/escritorio/empresa" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><EmpresaEscritorio /></ProtectedRoute>} />
+          <Route path="/configuracoes/empresa" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><EmpresaEscritorio /></ProtectedRoute>} />
+          <Route path="/empresa" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><EmpresaEscritorio /></ProtectedRoute>} />
           <Route path="/escritorio/clientes" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><ClientesEscritorio /></ProtectedRoute>} />
           <Route path="/escritorio/clientes/:id" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><ClienteDetalhes /></ProtectedRoute>} />
+          <Route path="/escritorio/importacoes" element={<ProtectedRoute allowedRoles={['ESCRITORIO', 'PROGRAMADOR']}><ImportacoesEscritorio /></ProtectedRoute>} />
 
           {/* Estoque Routes */}
           <Route path="/estoque" element={<ProtectedRoute allowedRoles={['ESTOQUE', 'PROGRAMADOR']}><DashboardEstoque /></ProtectedRoute>} />

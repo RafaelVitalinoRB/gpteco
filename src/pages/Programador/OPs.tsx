@@ -1,10 +1,30 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { OP, MachineCode, FioTipo, Especificacao, Cliente } from '../../types';
 import { generateSpecKey, calculateGramatura, calculatePesoEstimado, formatPeso, formatGramatura } from '../../lib/utils';
-import { Plus, Search, Trash2, X, Edit2 } from 'lucide-react';
+import { 
+  Plus, 
+  Search, 
+  Trash2, 
+  X, 
+  Edit2, 
+  Sparkles, 
+  Package, 
+  Calculator, 
+  ShieldAlert, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Layers, 
+  Info,
+  Scale
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import { 
+  getLotesDisponiveis, 
+  LoteMateriaPrima, 
+  EVENT_MATERIA_PRIMA_UPDATED 
+} from '../../services/estoqueClienteService';
 
 type NormalizedCliente = Cliente & { nome?: string };
 
@@ -230,6 +250,113 @@ export default function OPs() {
     };
   }, [foundEsp, formData.totalFios, formData.fiosPorPortada, formData.tituloFio, formData.tipoFio, formData.metros]);
 
+  // Sprint 3.4 — Inteligência de Matéria-Prima & Simulação
+  const [lotesMateriaPrima, setLotesMateriaPrima] = useState<LoteMateriaPrima[]>([]);
+  const [selectedLoteId, setSelectedLoteId] = useState<string>('');
+  const [reservaTecnicaPercentual, setReservaTecnicaPercentual] = useState<number>(10);
+
+  // Carregar lotes disponíveis de matéria-prima para o cliente
+  useEffect(() => {
+    const carregarLotes = () => {
+      const lotes = getLotesDisponiveis(formData.clienteId, formData.tituloFio);
+      setLotesMateriaPrima(lotes);
+      if (lotes.length > 0) {
+        if (!selectedLoteId || !lotes.some(l => l.id === selectedLoteId)) {
+          setSelectedLoteId(lotes[0].id);
+        }
+      } else {
+        setSelectedLoteId('');
+      }
+    };
+
+    if (formData.clienteId) {
+      carregarLotes();
+    } else {
+      setLotesMateriaPrima([]);
+      setSelectedLoteId('');
+    }
+
+    window.addEventListener(EVENT_MATERIA_PRIMA_UPDATED, carregarLotes);
+    return () => {
+      window.removeEventListener(EVENT_MATERIA_PRIMA_UPDATED, carregarLotes);
+    };
+  }, [formData.clienteId, formData.tituloFio, isModalOpen]);
+
+  const selectedLote = useMemo(() => {
+    return lotesMateriaPrima.find(l => l.id === selectedLoteId) || null;
+  }, [selectedLoteId, lotesMateriaPrima]);
+
+  // Simulação Inteligente e Reserva Técnica (Sprint 3.4 - Itens 6, 7 e 8)
+  const simulacaoMateriaPrima = useMemo(() => {
+    const pesoDisponivel = selectedLote ? selectedLote.pesoDisponivelKg : 0;
+    const reservaPercent = Number(reservaTecnicaPercentual) || 0;
+    const reservaKg = pesoDisponivel * (reservaPercent / 100);
+    // Todos os cálculos utilizam apenas o peso utilizável! (Item 7)
+    const pesoUtilizavel = Math.max(0, pesoDisponivel - reservaKg);
+
+    const totalFios = foundEsp?.totalFios || Number(formData.totalFios) || 0;
+    const tituloFio = foundEsp?.tituloFio || formData.tituloFio || '';
+    const tipoFio = foundEsp?.tipoFio || formData.tipoFio || 'POLIESTER';
+
+    // Gramatura calculada (g/m)
+    const gramatura = calculateGramatura(totalFios, tituloFio, tipoFio);
+    const pesoMetroKg = gramatura / 1000;
+
+    const isM3M4 = formData.maquina === 'MAQUINA 3' || formData.maquina === 'MAQUINA 4';
+    let metrosPorRolo = 0;
+    if (isM3M4) {
+      const voltas = Number(formData.voltas) || 0;
+      const avanco = foundEsp?.avanco && foundEsp.avanco > 0 ? (foundEsp.avanco / 100) : 4.5;
+      metrosPorRolo = voltas * avanco;
+    } else {
+      metrosPorRolo = Number(formData.metros) || 0;
+    }
+
+    const pesoPorRoloKg = pesoMetroKg * metrosPorRolo;
+
+    // Quantidade estimada de rolos completos (Item 6)
+    const rolosCompletosEstimados = (pesoPorRoloKg > 0 && pesoUtilizavel > 0)
+      ? Math.floor(pesoUtilizavel / pesoPorRoloKg)
+      : 0;
+
+    // Metragem máxima disponível (Item 6)
+    const metragemMaximaDisponivel = (pesoMetroKg > 0 && pesoUtilizavel > 0)
+      ? Math.floor(pesoUtilizavel / pesoMetroKg)
+      : 0;
+
+    // Consumo previsto da OP
+    const qtdRolos = Number(formData.qtdRolos) || 1;
+    const consumoTotalPrevistoKg = qtdRolos * pesoPorRoloKg;
+
+    // Saldo previsto após a produção (Item 6)
+    const saldoUtilizavelPrevistoKg = pesoUtilizavel - consumoTotalPrevistoKg;
+    const saldoTotalPrevistoKg = pesoDisponivel - consumoTotalPrevistoKg;
+
+    const pesoMedioCone = selectedLote?.pesoMedioConeKg || (selectedLote && selectedLote.totalCones > 0 ? selectedLote.pesoLiquido / selectedLote.totalCones : 0);
+    const conesConsumidosPrevistos = pesoMedioCone > 0 ? Math.ceil(consumoTotalPrevistoKg / pesoMedioCone) : 0;
+    const saldoConesPrevisto = (selectedLote?.totalCones || 0) - conesConsumidosPrevistos;
+
+    const isViavel = pesoUtilizavel >= consumoTotalPrevistoKg && pesoUtilizavel > 0;
+
+    return {
+      selectedLote,
+      pesoDisponivel,
+      reservaPercent,
+      reservaKg,
+      pesoUtilizavel,
+      pesoMetroKg,
+      pesoPorRoloKg,
+      rolosCompletosEstimados,
+      metragemMaximaDisponivel,
+      consumoTotalPrevistoKg,
+      saldoUtilizavelPrevistoKg,
+      saldoTotalPrevistoKg,
+      pesoMedioCone,
+      saldoConesPrevisto,
+      isViavel
+    };
+  }, [selectedLote, reservaTecnicaPercentual, foundEsp, formData.totalFios, formData.tituloFio, formData.tipoFio, formData.maquina, formData.metros, formData.voltas, formData.qtdRolos]);
+
   const filteredOPs = ops.filter(op => {
     const cliente = clientes.find(c => c.id.toString() === op.clienteId?.toString());
     const search = searchTerm.toLowerCase();
@@ -243,6 +370,23 @@ export default function OPs() {
     if (op) {
       setFormData(op);
       setEditingId(op.id);
+      try {
+        const rawSim = localStorage.getItem('texlog_ops_simulacao_mp');
+        if (rawSim) {
+          const simMap = JSON.parse(rawSim);
+          const saved = simMap[op.id] || simMap[op.codigo];
+          if (saved) {
+            setSelectedLoteId(saved.loteId || '');
+            setReservaTecnicaPercentual(saved.reservaPercentual !== undefined ? saved.reservaPercentual : 10);
+          } else {
+            setSelectedLoteId('');
+            setReservaTecnicaPercentual(10);
+          }
+        }
+      } catch {
+        setSelectedLoteId('');
+        setReservaTecnicaPercentual(10);
+      }
     } else {
       setFormData({
         clienteId: '',
@@ -262,6 +406,8 @@ export default function OPs() {
       setFoundEsps([]);
       setSelectedEspId('');
       setEditingId(null);
+      setSelectedLoteId('');
+      setReservaTecnicaPercentual(10);
     }
     setIsModalOpen(true);
   };
@@ -396,6 +542,46 @@ export default function OPs() {
 
         if (error) throw error;
         toast.success('Ordem de Produção criada com sucesso.');
+      }
+
+      // Salvar snapshot da Simulação Inteligente de Matéria-Prima (Sprint 3.4)
+      const opIdKey = editingId ? String(editingId) : (ops.length > 0 ? `OP-${(Math.max(...ops.map(o => parseInt(o.codigo.replace('OP-', '')) || 0)) + 1).toString().padStart(4, '0')}` : 'OP-0001');
+      const simRecord = {
+        opId: opIdKey,
+        opCodigo: editingId ? (ops.find(o => o.id === editingId)?.codigo || opIdKey) : opIdKey,
+        loteId: selectedLote?.id || null,
+        loteNumero: selectedLote?.lote || null,
+        clienteId: formData.clienteId,
+        materialNome: selectedLote?.fioNome || formData.tituloFio,
+        cor: selectedLote?.cor || '',
+        tipoEmbalagem: selectedLote?.tipoEmbalagem || '',
+        classificacao: selectedLote?.classificacao || '',
+        pesoDisponivelKg: simulacaoMateriaPrima.pesoDisponivel,
+        reservaPercentual: simulacaoMateriaPrima.reservaPercent,
+        reservaKg: simulacaoMateriaPrima.reservaKg,
+        pesoUtilizavelKg: simulacaoMateriaPrima.pesoUtilizavel,
+        totalCones: selectedLote?.totalCones || 0,
+        pesoMedioConeKg: simulacaoMateriaPrima.pesoMedioCone,
+        metragemMaximaDisponivel: simulacaoMateriaPrima.metragemMaximaDisponivel,
+        rolosCompletosEstimados: simulacaoMateriaPrima.rolosCompletosEstimados,
+        consumoTotalPrevistoKg: simulacaoMateriaPrima.consumoTotalPrevistoKg,
+        saldoTotalPrevistoKg: simulacaoMateriaPrima.saldoTotalPrevistoKg,
+        saldoConesPrevisto: simulacaoMateriaPrima.saldoConesPrevisto,
+        isViavel: simulacaoMateriaPrima.isViavel,
+        salvoEm: new Date().toISOString()
+      };
+
+      try {
+        const rawSim = localStorage.getItem('texlog_ops_simulacao_mp');
+        const simMap = rawSim ? JSON.parse(rawSim) : {};
+        simMap[opIdKey] = simRecord;
+        if (editingId) {
+          const foundOp = ops.find(o => o.id === editingId);
+          if (foundOp) simMap[foundOp.codigo] = simRecord;
+        }
+        localStorage.setItem('texlog_ops_simulacao_mp', JSON.stringify(simMap));
+      } catch (e) {
+        console.error('Erro ao salvar simulação de matéria-prima:', e);
       }
 
       setIsModalOpen(false);
@@ -810,6 +996,365 @@ export default function OPs() {
                         placeholder="Instruções operacionais para o operador da máquina..."
                         className="w-full bg-black border border-neutral-800 text-white rounded-2xl py-3 px-5 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium text-sm resize-none"
                       />
+                    </div>
+                  </div>
+                </div>
+
+                {/* SPRINT 3.4 — SEÇÃO: INTELIGÊNCIA DE MATÉRIA-PRIMA & SIMULAÇÃO */}
+                <div className="md:col-span-2 bg-gradient-to-br from-neutral-950 via-blue-950/20 to-neutral-950 border border-blue-500/30 rounded-3xl p-6 sm:p-7 space-y-6 shadow-2xl relative overflow-hidden">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-neutral-800/80 pb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 shadow-lg shadow-blue-500/10">
+                        <Sparkles className="w-5 h-5 text-blue-400 animate-pulse" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-black uppercase tracking-[0.15em] text-white">
+                            Inteligência de Matéria-Prima
+                          </h4>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30 font-mono">
+                            Sprint 3.4
+                          </span>
+                        </div>
+                        <p className="text-neutral-400 text-xs mt-0.5">
+                          Planejamento e simulação com base no material disponível em estoque antes de produzir
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-auto">
+                      <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border flex items-center gap-1.5 ${
+                        simulacaoMateriaPrima.isViavel
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                      }`}>
+                        {simulacaoMateriaPrima.isViavel ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            Produção Viável
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                            Atenção ao Saldo
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 1. Seleção do Lote de Matéria-Prima (Item 5) */}
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] flex items-center gap-1.5">
+                          <Package className="w-3.5 h-3.5 text-blue-400" />
+                          Selecionar Lote de Matéria-Prima *
+                        </label>
+                        <span className="text-[10px] text-neutral-500 font-mono">
+                          {lotesMateriaPrima.length} {lotesMateriaPrima.length === 1 ? 'lote disponível' : 'lotes disponíveis'}
+                        </span>
+                      </div>
+
+                      {lotesMateriaPrima.length > 0 ? (
+                        <select
+                          value={selectedLoteId}
+                          onChange={(e) => setSelectedLoteId(e.target.value)}
+                          className="w-full bg-black border border-blue-500/40 text-white rounded-2xl py-3.5 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm"
+                        >
+                          <option value="">Selecione o lote do cliente...</option>
+                          {lotesMateriaPrima.map(lote => (
+                            <option key={lote.id} value={lote.id}>
+                              {lote.lote} — {lote.fioNome} ({lote.cor}) • Disp: {lote.pesoDisponivelKg.toFixed(2)} kg ({lote.totalCones} cones em {lote.quantidadeEmbalagens} {lote.tipoEmbalagem}) • {lote.numeroNf}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex items-start gap-3">
+                          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <div className="text-xs text-amber-200/90">
+                            <p className="font-bold">Nenhum lote registrado para este cliente nas entradas de NF.</p>
+                            <p className="text-neutral-400 text-[11px] mt-0.5">
+                              Lançamentos de Nota Fiscal realizados no Escritório aparecem automaticamente aqui com rastreabilidade total.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Apresentação do Material Selecionado (Item 5) */}
+                    {selectedLote && (
+                      <div className="bg-black/50 border border-white/5 rounded-2xl p-4 sm:p-5 space-y-4">
+                        <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest border-b border-white/5 pb-2 flex items-center justify-between">
+                          <span>Material Selecionado para Produção</span>
+                          <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
+                            NF: {selectedLote.numeroNf}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                          <div className="bg-neutral-900/60 p-3 rounded-xl border border-white/5">
+                            <span className="text-neutral-500 text-[9px] font-black uppercase tracking-wider block mb-1">Cliente</span>
+                            <span className="text-white font-bold text-xs truncate block" title={selectedLote.clienteNome}>
+                              {clientes.find(c => c.id.toString() === formData.clienteId?.toString())?.nome || selectedLote.clienteNome}
+                            </span>
+                          </div>
+
+                          <div className="bg-neutral-900/60 p-3 rounded-xl border border-white/5">
+                            <span className="text-neutral-500 text-[9px] font-black uppercase tracking-wider block mb-1">Material / Cor</span>
+                            <span className="text-white font-bold text-xs truncate block" title={`${selectedLote.fioNome} - ${selectedLote.cor}`}>
+                              {selectedLote.fioNome} ({selectedLote.cor})
+                            </span>
+                          </div>
+
+                          <div className="bg-neutral-900/60 p-3 rounded-xl border border-white/5">
+                            <span className="text-neutral-500 text-[9px] font-black uppercase tracking-wider block mb-1">Qtd. Embalagens</span>
+                            <span className="text-white font-mono font-bold text-sm">
+                              {selectedLote.quantidadeEmbalagens} <span className="text-[10px] text-neutral-400 font-normal">{selectedLote.tipoEmbalagem}</span>
+                            </span>
+                          </div>
+
+                          <div className="bg-neutral-900/60 p-3 rounded-xl border border-white/5">
+                            <span className="text-neutral-500 text-[9px] font-black uppercase tracking-wider block mb-1">Total de Cones</span>
+                            <span className="text-blue-400 font-mono font-black text-sm">
+                              {selectedLote.totalCones} cones
+                            </span>
+                          </div>
+
+                          <div className="bg-neutral-900/60 p-3 rounded-xl border border-white/5">
+                            <span className="text-neutral-500 text-[9px] font-black uppercase tracking-wider block mb-1">Peso Disponível</span>
+                            <span className="text-emerald-400 font-mono font-black text-sm">
+                              {selectedLote.pesoDisponivelKg.toFixed(2)} kg
+                            </span>
+                          </div>
+
+                          <div className="bg-neutral-900/60 p-3 rounded-xl border border-white/5">
+                            <span className="text-neutral-500 text-[9px] font-black uppercase tracking-wider block mb-1">Peso Médio Cone</span>
+                            <span className="text-purple-400 font-mono font-black text-sm">
+                              {selectedLote.pesoMedioConeKg.toFixed(3)} kg
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Reserva Técnica (Item 7) */}
+                  <div className="bg-neutral-950/80 border border-neutral-800 rounded-2xl p-4 sm:p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <ShieldAlert className="w-4 h-4 text-blue-400" />
+                          <h5 className="text-xs font-black uppercase tracking-wider text-white">
+                            Reserva Técnica (Descontada dos Cálculos)
+                          </h5>
+                        </div>
+                        <p className="text-[11px] text-neutral-400">
+                          Margem de segurança percentual descontada do peso disponível antes de calcular metragem e rolos.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2 bg-black border border-neutral-800 rounded-xl px-3 py-2">
+                          <label className="text-xs font-bold text-neutral-400 uppercase">Reserva:</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="50"
+                            step="1"
+                            value={reservaTecnicaPercentual}
+                            onChange={(e) => setReservaTecnicaPercentual(Math.max(0, Math.min(50, parseFloat(e.target.value) || 0)))}
+                            className="w-14 bg-transparent text-white font-mono font-black text-sm focus:outline-none text-right"
+                          />
+                          <span className="text-xs font-bold text-neutral-400">%</span>
+                        </div>
+
+                        <div className="text-right border-l border-neutral-800 pl-4">
+                          <span className="text-[10px] uppercase font-bold text-neutral-500 block">Dedução em Peso</span>
+                          <span className="text-xs font-mono font-black text-amber-400">
+                            - {simulacaoMateriaPrima.reservaKg.toFixed(2)} kg
+                          </span>
+                        </div>
+
+                        <div className="text-right border-l border-neutral-800 pl-4">
+                          <span className="text-[10px] uppercase font-bold text-neutral-500 block">Peso Utilizável</span>
+                          <span className="text-base font-mono font-black text-emerald-400">
+                            {simulacaoMateriaPrima.pesoUtilizavel.toFixed(2)} kg
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Simulação Inteligente (Item 6) */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400 flex items-center gap-1.5">
+                        <Calculator className="w-3.5 h-3.5 text-blue-400" />
+                        Resultados da Simulação Inteligente (Baseada no Peso Utilizável)
+                      </span>
+                      <span className="text-[10px] font-mono text-neutral-500">
+                        {foundEsp ? `Gramatura: ${formatGramatura(calculateGramatura(foundEsp.totalFios, foundEsp.tituloFio, foundEsp.tipoFio))} g/m` : ''}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {/* Metragem máxima disponível */}
+                      <div className="bg-black/60 border border-white/5 rounded-2xl p-4">
+                        <span className="text-neutral-500 text-[10px] font-black uppercase tracking-wider block mb-1">
+                          Metragem Máxima Disponível
+                        </span>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-xl font-mono font-black text-white">
+                            {simulacaoMateriaPrima.metragemMaximaDisponivel.toLocaleString('pt-BR')}
+                          </span>
+                          <span className="text-xs text-neutral-400 font-bold">metros</span>
+                        </div>
+                        <span className="text-[10px] text-neutral-500 mt-1 block">
+                          Com o peso utilizável de {simulacaoMateriaPrima.pesoUtilizavel.toFixed(2)} kg
+                        </span>
+                      </div>
+
+                      {/* Quantidade estimada de rolos completos */}
+                      <div className="bg-black/60 border border-white/5 rounded-2xl p-4">
+                        <span className="text-neutral-500 text-[10px] font-black uppercase tracking-wider block mb-1">
+                          Rolos Completos Estimados
+                        </span>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-xl font-mono font-black text-blue-400">
+                            {simulacaoMateriaPrima.rolosCompletosEstimados}
+                          </span>
+                          <span className="text-xs text-neutral-400 font-bold">rolos</span>
+                        </div>
+                        <span className="text-[10px] text-neutral-500 mt-1 block">
+                          Meta planejada nesta OP: {formData.qtdRolos || 1} rolo(s)
+                        </span>
+                      </div>
+
+                      {/* Saldo previsto após a produção */}
+                      <div className="bg-black/60 border border-white/5 rounded-2xl p-4">
+                        <span className="text-neutral-500 text-[10px] font-black uppercase tracking-wider block mb-1">
+                          Saldo Previsto Após Produção
+                        </span>
+                        <div className="flex items-baseline gap-1">
+                          <span className={`text-xl font-mono font-black ${
+                            simulacaoMateriaPrima.saldoTotalPrevistoKg >= 0 ? 'text-emerald-400' : 'text-red-400'
+                          }`}>
+                            {simulacaoMateriaPrima.saldoTotalPrevistoKg.toFixed(2)}
+                          </span>
+                          <span className="text-xs text-neutral-400 font-bold">kg</span>
+                        </div>
+                        <span className="text-[10px] text-neutral-500 mt-1 block">
+                          Saldo de cones: ~{simulacaoMateriaPrima.saldoConesPrevisto} cones
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Quadro Informativo Pré-Confirmação da OP (Item 8) */}
+                  <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-5 space-y-4">
+                    <div className="flex items-center justify-between border-b border-neutral-800/80 pb-3">
+                      <div className="flex items-center gap-2">
+                        <Scale className="w-4 h-4 text-purple-400" />
+                        <h5 className="text-xs font-black uppercase tracking-wider text-white">
+                          Informações Exibidas ao Programador Pré-Confirmação
+                        </h5>
+                      </div>
+                      <span className="text-[10px] text-neutral-500 uppercase font-mono">
+                        Conferência Técnica Obrigatória
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">1. Cliente</span>
+                        <span className="text-white font-bold truncate block">
+                          {clientes.find(c => c.id.toString() === formData.clienteId?.toString())?.nomeFantasia || 
+                           clientes.find(c => c.id.toString() === formData.clienteId?.toString())?.nome || '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">2. Material Disponível</span>
+                        <span className="text-white font-bold truncate block">
+                          {selectedLote ? `${selectedLote.fioNome} (${selectedLote.cor})` : formData.tituloFio || '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">3. Peso Disponível</span>
+                        <span className="text-white font-mono font-bold">
+                          {simulacaoMateriaPrima.pesoDisponivel > 0 ? `${simulacaoMateriaPrima.pesoDisponivel.toFixed(2)} kg` : '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">4. Reserva Técnica</span>
+                        <span className="text-amber-400 font-mono font-bold">
+                          {simulacaoMateriaPrima.reservaPercent}% ({simulacaoMateriaPrima.reservaKg.toFixed(2)} kg)
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">5. Peso Utilizável</span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          {simulacaoMateriaPrima.pesoUtilizavel > 0 ? `${simulacaoMateriaPrima.pesoUtilizavel.toFixed(2)} kg` : '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">6. Qtd. de Cones</span>
+                        <span className="text-blue-400 font-mono font-bold">
+                          {selectedLote ? `${selectedLote.totalCones} cones` : '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">7. Peso Médio / Cone</span>
+                        <span className="text-purple-400 font-mono font-bold">
+                          {simulacaoMateriaPrima.pesoMedioCone > 0 ? `${simulacaoMateriaPrima.pesoMedioCone.toFixed(3)} kg` : '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">8. Metragem Estimada</span>
+                        <span className="text-white font-mono font-bold">
+                          {simulacaoMateriaPrima.metragemMaximaDisponivel > 0 ? `${simulacaoMateriaPrima.metragemMaximaDisponivel.toLocaleString('pt-BR')} m` : '—'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">9. Qtd. Estimada Rolos</span>
+                        <span className="text-blue-400 font-mono font-bold">
+                          {simulacaoMateriaPrima.rolosCompletosEstimados} rolos completos
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-neutral-500 block text-[10px] uppercase font-bold">10. Saldo Previsto</span>
+                        <span className={`font-mono font-bold ${simulacaoMateriaPrima.saldoTotalPrevistoKg >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {simulacaoMateriaPrima.saldoTotalPrevistoKg.toFixed(2)} kg
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Alerta de Decisão para o Programador */}
+                    <div className={`p-3 rounded-xl border flex items-center gap-3 text-xs ${
+                      simulacaoMateriaPrima.isViavel
+                        ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300'
+                        : 'bg-amber-500/5 border-amber-500/20 text-amber-300'
+                    }`}>
+                      {simulacaoMateriaPrima.isViavel ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      )}
+                      <span>
+                        {simulacaoMateriaPrima.isViavel
+                          ? `Produção 100% Viável: O lote possui peso utilizável de ${simulacaoMateriaPrima.pesoUtilizavel.toFixed(2)} kg, suficiente para produzir os ${formData.qtdRolos || 1} rolo(s) planejados (consumo previsto: ${simulacaoMateriaPrima.consumoTotalPrevistoKg.toFixed(2)} kg).`
+                          : `Atenção na decisão: O consumo previsto desta OP (${simulacaoMateriaPrima.consumoTotalPrevistoKg.toFixed(2)} kg) excede o peso utilizável de ${simulacaoMateriaPrima.pesoUtilizavel.toFixed(2)} kg deste lote. Avalie reduzir a quantidade de rolos ou ajustar a reserva técnica antes de iniciar a produção.`
+                        }
+                      </span>
                     </div>
                   </div>
                 </div>

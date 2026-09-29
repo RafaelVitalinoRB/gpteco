@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Check, Search, MapPin, Building, Phone, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../../lib/supabase';
+import { fetchClientesOficiais } from '../../../services/clienteService';
 
 interface ClienteModalProps {
   isOpen: boolean;
@@ -170,6 +171,7 @@ export function ClienteModal({
         toast.success('Cliente cadastrado com sucesso');
       }
 
+      fetchClientesOficiais().catch(() => {});
       onSuccess();
       onClose();
     } catch (err: any) {

@@ -48,8 +48,36 @@ export default function GlobalSearch() {
       op.codigo.toLowerCase().includes(q)
     );
 
-    const filteredRolos = rolos.filter(r => 
-      r.numeroRolo.toString().includes(q)
+    // Buscar rolos no store e no histórico de rolos oficiais
+    let rolosUnificados: any[] = [...rolos];
+    try {
+      const raw = localStorage.getItem('texlog_historico_rolos_produzidos');
+      if (raw) {
+        const hist = JSON.parse(raw);
+        if (Array.isArray(hist)) {
+          hist.forEach((h: any) => {
+            if (!rolosUnificados.some(r => String(r.id) === String(h.id) || String(r.numeroRolo) === String(h.numero_rolo))) {
+              rolosUnificados.push({
+                id: String(h.id || h.numero_rolo),
+                opId: String(h.op_id || ''),
+                numeroRolo: h.numero_rolo || h.id,
+                status: h.status || 'FINALIZADO',
+                portadasTotal: h.voltas || 0,
+                iniciadoEm: h.iniciado_em || h.pesado_em,
+                finalizadoEm: h.pesado_em || h.finalizado_em,
+                pesoRealKg: h.peso_real_kg,
+                clienteNome: h.cliente_nome,
+                opCodigo: h.op_codigo
+              });
+            }
+          });
+        }
+      }
+    } catch {}
+
+    const filteredRolos = rolosUnificados.filter(r => 
+      String(r.numeroRolo || '').toLowerCase().includes(q) ||
+      String(r.clienteNome || '').toLowerCase().includes(q)
     );
 
     const filteredNfs = [
@@ -198,13 +226,17 @@ export default function GlobalSearch() {
         </div>
       )}
 
-      {selectedRoloId && (
-        <RoloDetailsModal 
-          rolo={rolos.find(r => r.id === selectedRoloId)!}
-          operadores={operadores}
-          onClose={() => setSelectedRoloId(null)}
-        />
-      )}
+      {selectedRoloId && (() => {
+        const roloFound = rolos.find(r => r.id === selectedRoloId) || results.rolos.find(r => r.id === selectedRoloId);
+        if (!roloFound) return null;
+        return (
+          <RoloDetailsModal 
+            rolo={roloFound}
+            operadores={operadores}
+            onClose={() => setSelectedRoloId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

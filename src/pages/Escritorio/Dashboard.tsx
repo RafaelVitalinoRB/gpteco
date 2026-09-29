@@ -1,801 +1,470 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { 
+  Cpu, 
+  Truck, 
+  DollarSign, 
+  Settings, 
+  ArrowRight, 
+  Clock, 
+  Scale, 
+  Package, 
+  FileText, 
+  Receipt, 
+  CheckCircle2, 
+  Building2,
+  ChevronRight,
+  TrendingUp,
+  Sliders
+} from 'lucide-react';
 import { useStore } from '../../store/useStore';
-import { Plus, Search, ArrowDownRight, ArrowUpRight, X, Trash2, Edit2, Scale, Building2 } from 'lucide-react';
-import toast from 'react-hot-toast';
-import { generateId } from '../../lib/utils';
-import { Entrada, Saida } from '../../types';
-import { TIPOS_FIO } from '../../lib/calculations';
-import { FilaRolosAguardandoPesagem } from './FilaRolosAguardandoPesagem';
+import { ProducaoModule } from './modules/ProducaoModule';
+import { ExpedicaoModule } from './modules/ExpedicaoModule';
+import { FinanceiroModule } from './modules/FinanceiroModule';
+import { ConfiguracoesModule } from './modules/ConfiguracoesModule';
+import { ResumoExpedicaoFaturamento } from './ModalFaturamento';
+import { buscarRolosEmEstoque } from '../../services/roloOficialService';
+
+export type ModuloEscritorio = 'PRODUCAO' | 'EXPEDICAO' | 'FINANCEIRO' | 'CONFIGURACOES';
 
 export default function DashboardEscritorio() {
-  const { user, clientes, fiosCliente, ops, rolos, entradas, saidas, addEntrada, updateEntrada, deleteEntrada, addSaida, updateSaida, deleteSaida, addEventoProducao } = useStore();
-  const [activeTab, setActiveTab] = useState<'PESAGEM' | 'ENTRADAS' | 'SAIDAS' | 'FATURAMENTO'>('PESAGEM');
-  const [saidaTab, setSaidaTab] = useState<'SALDO' | 'ROLOS'>('SALDO');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isSaidaModalOpen, setIsSaidaModalOpen] = useState(false);
-  const [editingEntradaId, setEditingEntradaId] = useState<string | null>(null);
-  const [editingSaidaId, setEditingSaidaId] = useState<string | null>(null);
-  const [rolosAguardandoCount, setRolosAguardandoCount] = useState<number>(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { rolos, ops } = useStore();
 
-  // Calcular contagem de rolos aguardando pesagem
+  // Mapear parâmetros da URL
+  const paramModulo = (searchParams.get('modulo') || '').toUpperCase() as ModuloEscritorio;
+  const paramSub = searchParams.get('sub') || '';
+
+  const [activeModulo, setActiveModulo] = useState<ModuloEscritorio>(() => {
+    if (['PRODUCAO', 'EXPEDICAO', 'FINANCEIRO', 'CONFIGURACOES'].includes(paramModulo)) {
+      return paramModulo;
+    }
+    return 'EXPEDICAO'; // Expedição é o módulo principal operacional do Escritório
+  });
+
+  const [activeSub, setActiveSub] = useState<string>(() => {
+    if (paramSub) return paramSub;
+    if (paramModulo === 'PRODUCAO') return 'painel-maquinas';
+    if (paramModulo === 'FINANCEIRO') return 'faturamentos';
+    if (paramModulo === 'CONFIGURACOES') return 'empresa';
+    return 'estoque-rolos'; // Padrão da Expedição
+  });
+
+  // Expedição sendo faturada diretamente após pergunta "Deseja faturar esta expedição?"
+  const [expedicaoFaturandoDireto, setExpedicaoFaturandoDireto] = useState<ResumoExpedicaoFaturamento | null>(null);
+
+  // Contadores para badges e KPIs em tempo real
+  const [rolosAguardandoPesagemCount, setRolosAguardandoPesagemCount] = useState<number>(0);
+  const [rolosEmEstoqueCount, setRolosEmEstoqueCount] = useState<number>(0);
+  const [romaneiosPendentesCount, setRomaneiosPendentesCount] = useState<number>(0);
+
+  const atualizarContadores = () => {
+    // 1. Rolos aguardando pesagem
+    let countPesagem = rolos.filter(r => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
+    try {
+      const raw = localStorage.getItem('texlog_historico_rolos_produzidos');
+      if (raw) {
+        const list = JSON.parse(raw);
+        countPesagem = list.filter((r: any) => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
+      }
+    } catch {}
+    setRolosAguardandoPesagemCount(countPesagem);
+
+    // 2. Rolos em estoque
+    const estoque = buscarRolosEmEstoque();
+    setRolosEmEstoqueCount(estoque.length);
+
+    // 3. Romaneios pendentes
+    try {
+      const rawRom = localStorage.getItem('texlog_romaneios_emitidos');
+      if (rawRom) {
+        const listRom = JSON.parse(rawRom);
+        const pendentes = listRom.filter((r: any) => r.status === 'PENDENTE_FATURAMENTO' || !r.status);
+        setRomaneiosPendentesCount(pendentes.length);
+      }
+    } catch {}
+  };
+
   useEffect(() => {
-    const recalcularCount = () => {
-      let count = rolos.filter(r => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
-      try {
-        const raw = localStorage.getItem('texlog_historico_rolos_produzidos');
-        if (raw) {
-          const list = JSON.parse(raw);
-          const locais = list.filter((r: any) => (r.status || '').toUpperCase() === 'AGUARDANDO_PESAGEM').length;
-          count = Math.max(count, locais);
-        }
-      } catch {}
-      setRolosAguardandoCount(count);
-    };
-
-    recalcularCount();
-    window.addEventListener('storage', recalcularCount);
-    window.addEventListener('texlog_novo_rolo_pesagem', recalcularCount);
-    const interval = setInterval(recalcularCount, 4000);
+    atualizarContadores();
+    const handleRecarregar = () => atualizarContadores();
+    window.addEventListener('texlog_rolo_pesado', handleRecarregar);
+    window.addEventListener('texlog_novo_rolo_pesagem', handleRecarregar);
+    window.addEventListener('texlog_saida_updated', handleRecarregar);
+    window.addEventListener('texlog_faturamento_updated', handleRecarregar);
+    window.addEventListener('storage', handleRecarregar);
+    const interval = setInterval(atualizarContadores, 5000);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('storage', recalcularCount);
-      window.removeEventListener('texlog_novo_rolo_pesagem', recalcularCount);
+      window.removeEventListener('texlog_rolo_pesado', handleRecarregar);
+      window.removeEventListener('texlog_novo_rolo_pesagem', handleRecarregar);
+      window.removeEventListener('texlog_saida_updated', handleRecarregar);
+      window.removeEventListener('texlog_faturamento_updated', handleRecarregar);
+      window.removeEventListener('storage', handleRecarregar);
     };
   }, [rolos]);
 
-  const [entradaForm, setEntradaForm] = useState<Partial<Entrada>>({
-    clienteId: '',
-    tipoFio: TIPOS_FIO[0],
-    tituloFio: '',
-    nfNumero: '',
-    tipoLancamento: 'CAIXAS',
-    quantidade: 0,
-    pesoBruto: 0,
-    pesoLiquido: 0,
-    isRetroativo: false,
-    dataLancamento: new Date().toISOString().split('T')[0],
-    observacao: ''
-  });
-
-  const [saidaForm, setSaidaForm] = useState<Partial<Saida>>({
-    clienteId: '',
-    tipoLancamento: 'CAIXAS',
-    quantidade: 0,
-    pesoLiquido: 0,
-    tipoFio: TIPOS_FIO[0],
-    tituloFio: '',
-    nfNumero: '',
-    opId: '',
-    roloId: '',
-    metros: 0,
-    voltas: 0,
-    valorCobrado: 0,
-    isRetroativo: false,
-    dataLancamento: new Date().toISOString().split('T')[0],
-    observacao: ''
-  });
-
-  const handleEntradaSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!entradaForm.clienteId || !entradaForm.nf) {
-      toast.error('Preencha os campos obrigatórios');
-      return;
+  // Sincronizar estado com a URL quando muda externamente
+  useEffect(() => {
+    if (paramModulo && ['PRODUCAO', 'EXPEDICAO', 'FINANCEIRO', 'CONFIGURACOES'].includes(paramModulo)) {
+      if (paramModulo !== activeModulo) {
+        setActiveModulo(paramModulo);
+      }
     }
-
-    if (editingEntradaId) {
-      updateEntrada(editingEntradaId, entradaForm);
-      toast.success('Entrada atualizada com sucesso');
-    } else {
-      addEntrada({
-        ...entradaForm,
-        id: generateId(),
-        dataLancamento: entradaForm.isRetroativo ? new Date(entradaForm.dataLancamento!).toISOString() : new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      } as Entrada);
-      toast.success('Entrada registrada com sucesso');
+    if (paramSub && paramSub !== activeSub) {
+      setActiveSub(paramSub);
     }
+  }, [paramModulo, paramSub]);
 
-    setIsModalOpen(false);
-    setEditingEntradaId(null);
+  // Navegar entre Módulos
+  const handleSelecionarModulo = (mod: ModuloEscritorio) => {
+    setActiveModulo(mod);
+    let defaultSub = 'painel-maquinas';
+    if (mod === 'EXPEDICAO') defaultSub = 'estoque-rolos';
+    if (mod === 'FINANCEIRO') defaultSub = 'faturamentos';
+    if (mod === 'CONFIGURACOES') defaultSub = 'empresa';
+    
+    setActiveSub(defaultSub);
+    setSearchParams({ modulo: mod.toLowerCase(), sub: defaultSub });
   };
 
-  const handleSaidaSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!saidaForm.clienteId) {
-      toast.error('Preencha os campos obrigatórios');
-      return;
-    }
+  // Navegar entre Submenus
+  const handleNavigateSub = (sub: string) => {
+    setActiveSub(sub);
+    setSearchParams({ modulo: activeModulo.toLowerCase(), sub });
+  };
 
-    if (editingSaidaId) {
-      updateSaida(editingSaidaId, saidaForm);
-      toast.success('Saída atualizada com sucesso');
-    } else {
-      addSaida({
-        ...saidaForm,
-        id: generateId(),
-        dataLancamento: saidaForm.isRetroativo ? new Date(saidaForm.dataLancamento!).toISOString() : new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      } as Saida);
+  // Transição do módulo de Produção para Pesagem na Expedição
+  const handleIrParaPesagem = () => {
+    setActiveModulo('EXPEDICAO');
+    setActiveSub('pesagem');
+    setSearchParams({ modulo: 'expedicao', sub: 'pesagem' });
+  };
 
-      if (saidaForm.tipoLancamento === 'ROLETES' && saidaForm.roloId) {
-        // Use addEventoProducao if it's a roll finalized or similar?
-        // Actually this seems like just logging the exit.
-        addEventoProducao({
-          id: generateId(),
-          opId: saidaForm.opId!,
-          roloId: saidaForm.roloId,
-          operadorId: user?.machine || 'admin',
-          machineCode: 'MAQUINA 1', // fallback
-          tipoEvento: 'FINALIZAR_ROLO',
-          portadasNoEvento: 0,
-          timestampInicio: new Date().toISOString(),
-          observacao: `Saída registrada na NF ${saidaForm.nfNumero}. Peso: ${saidaForm.pesoLiquido}kg`,
-          createdAt: new Date().toISOString()
-        });
-      }
-
-      toast.success('Saída registrada com sucesso');
-    }
-
-    setIsSaidaModalOpen(false);
-    setEditingSaidaId(null);
+  // Transição da Expedição (Romaneio gerado e usuário respondeu SIM) para Faturamento
+  const handleAbrirFaturamentoDireto = (expedicao: ResumoExpedicaoFaturamento) => {
+    setExpedicaoFaturandoDireto(expedicao);
+    setActiveModulo('FINANCEIRO');
+    setActiveSub('faturamentos');
+    setSearchParams({ modulo: 'financeiro', sub: 'faturamentos' });
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="space-y-6 animate-in fade-in duration-200">
+      
+      {/* ========================================================================= */}
+      {/* CABEÇALHO ESCRITÓRIO 3.0: 4 GRANDES PROCESSOS ADMINISTRATIVOS DA RB SOUZA */}
+      {/* ========================================================================= */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-xl">
         <div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Escritório</h1>
-          <p className="text-neutral-400 mt-1">Controle de entradas, saídas e faturamento</p>
+          <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">
+            <span>TEXLOG ERP</span>
+            <ChevronRight className="w-3.5 h-3.5 text-neutral-600" />
+            <span className="text-white">Módulo Escritório 3.0</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+            Gestão Operacional & Administrativa
+          </h1>
+          <p className="text-xs sm:text-sm text-neutral-400 mt-1 max-w-2xl">
+            Estrutura baseada nos quatro grandes processos da empresa: Produção, Expedição, Faturamento e Configurações.
+          </p>
         </div>
+
+        {/* Resumo Rápido de Status */}
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to="/escritorio/clientes"
-            className="bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 px-5 py-3 rounded-xl font-medium flex items-center gap-2 transition-colors text-sm"
-          >
-            <Building2 className="w-4 h-4" />
-            <span>Módulo Clientes</span>
-          </Link>
-          {activeTab === 'ENTRADAS' && (
+          {rolosAguardandoPesagemCount > 0 && (
             <button
               onClick={() => {
-                setEditingEntradaId(null);
-                setEntradaForm({
-                  clienteId: '',
-                  tipoFio: TIPOS_FIO[0],
-                  tituloFio: '',
-                  nfNumero: '',
-                  tipoLancamento: 'CAIXAS',
-                  quantidade: 0,
-                  pesoBruto: 0,
-                  pesoLiquido: 0
-                });
-                setIsModalOpen(true);
+                setActiveModulo('EXPEDICAO');
+                handleNavigateSub('pesagem');
               }}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-blue-500/20"
+              className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-sm animate-pulse"
             >
-              <Plus className="w-5 h-5" />
-              Nova Entrada
+              <Scale className="w-4 h-4" />
+              <span>{rolosAguardandoPesagemCount} rolo(s) aguardando pesagem</span>
             </button>
           )}
-          {activeTab === 'SAIDAS' && (
+
+          {romaneiosPendentesCount > 0 && (
             <button
               onClick={() => {
-                setEditingSaidaId(null);
-                setSaidaForm({
-                  clienteId: '',
-                  tipoLancamento: 'CAIXAS',
-                  quantidade: 0,
-                  pesoLiquido: 0,
-                  tipoFio: TIPOS_FIO[0],
-                  tituloFio: '',
-                  nfNumero: '',
-                  opId: '',
-                  roloId: '',
-                  metros: 0,
-                  voltas: 0,
-                  valorCobrado: 0
-                });
-                setIsSaidaModalOpen(true);
+                setActiveModulo('FINANCEIRO');
+                handleNavigateSub('faturamentos');
               }}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium flex items-center gap-2 transition-colors shadow-lg shadow-purple-500/20"
+              className="bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-sm"
             >
-              <Plus className="w-5 h-5" />
-              Nova Saída
+              <Receipt className="w-4 h-4" />
+              <span>{romaneiosPendentesCount} romaneio(s) a faturar</span>
             </button>
           )}
         </div>
       </div>
 
-      <div className="flex border-b border-neutral-800 overflow-x-auto">
-        {[
-          { id: 'PESAGEM', label: 'Rolos aguardando pesagem', count: rolosAguardandoCount, icon: Scale },
-          { id: 'ENTRADAS', label: 'Entradas' },
-          { id: 'SAIDAS', label: 'Saídas' },
-          { id: 'FATURAMENTO', label: 'Faturamento' }
-        ].map(tab => {
-          const isPesagem = tab.id === 'PESAGEM';
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`px-6 py-4 text-sm font-bold whitespace-nowrap border-b-2 transition-all flex items-center gap-2.5 cursor-pointer ${
-                isActive
-                  ? isPesagem
-                    ? 'border-amber-500 text-amber-400 bg-amber-500/5'
-                    : 'border-blue-500 text-blue-500 bg-blue-500/5'
-                  : 'border-transparent text-neutral-400 hover:text-white'
-              }`}
-            >
-              {tab.icon && <tab.icon className={`w-4 h-4 ${isPesagem && tab.count > 0 ? 'text-amber-400 animate-pulse' : ''}`} />}
-              <span>{tab.label}</span>
-              {typeof tab.count === 'number' && tab.count > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-xs font-mono font-black bg-amber-500 text-black">
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      {/* ========================================================================= */}
+      {/* 4 GRANDES GRUPOS PRINCIPAIS COM IDENTIDADE VISUAL PADRONIZADA              */}
+      {/* 1️⃣ PRODUÇÃO (🔵 Azul)                                                     */}
+      {/* 2️⃣ EXPEDIÇÃO (🟢 Verde)                                                    */}
+      {/* 3️⃣ FATURAMENTO / FINANCEIRO (🟣 Roxo)                                     */}
+      {/* 4️⃣ CONFIGURAÇÕES (⚙ Cinza)                                                 */}
+      {/* ========================================================================= */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        
+        {/* 1️⃣ PRODUÇÃO (🔵 Azul) */}
+        <button
+          onClick={() => handleSelecionarModulo('PRODUCAO')}
+          className={`p-4 sm:p-5 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
+            activeModulo === 'PRODUCAO'
+              ? 'bg-blue-600/15 border-blue-500 shadow-lg shadow-blue-500/15 ring-1 ring-blue-500/50'
+              : 'bg-neutral-900/80 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+              activeModulo === 'PRODUCAO' ? 'bg-blue-600 text-white' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+            }`}>
+              <Cpu className="w-5 h-5" />
+            </div>
+            <span className="font-mono text-xs font-black px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              1. ACOMPANHAMENTO
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black text-white tracking-tight flex items-center gap-1.5">
+              <span>Produção</span>
+              <span className="text-blue-400 text-xs font-mono">🔵</span>
+            </h3>
+            <p className="text-[11px] text-neutral-400 mt-1 line-clamp-1">
+              Máquinas, OPs, retiradas, pesagens e ocorrências
+            </p>
+          </div>
+        </button>
+
+        {/* 2️⃣ EXPEDIÇÃO (🟢 Verde) - Principal Módulo Operacional */}
+        <button
+          onClick={() => handleSelecionarModulo('EXPEDICAO')}
+          className={`p-4 sm:p-5 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
+            activeModulo === 'EXPEDICAO'
+              ? 'bg-emerald-600/15 border-emerald-500 shadow-lg shadow-emerald-500/15 ring-1 ring-emerald-500/50'
+              : 'bg-neutral-900/80 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+              activeModulo === 'EXPEDICAO' ? 'bg-emerald-600 text-white' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+            }`}>
+              <Truck className="w-5 h-5" />
+            </div>
+            <span className="font-mono text-xs font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              2. OPERACIONAL
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black text-white tracking-tight flex items-center gap-1.5">
+              <span>Expedição</span>
+              <span className="text-emerald-400 text-xs font-mono">🟢</span>
+            </h3>
+            <p className="text-[11px] text-neutral-400 mt-1 line-clamp-1">
+              Fios, pesagem, estoque de rolos e romaneios
+            </p>
+          </div>
+        </button>
+
+        {/* 3️⃣ FATURAMENTO / FINANCEIRO (🟣 Roxo) */}
+        <button
+          onClick={() => handleSelecionarModulo('FINANCEIRO')}
+          className={`p-4 sm:p-5 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
+            activeModulo === 'FINANCEIRO'
+              ? 'bg-purple-600/15 border-purple-500 shadow-lg shadow-purple-500/15 ring-1 ring-purple-500/50'
+              : 'bg-neutral-900/80 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+              activeModulo === 'FINANCEIRO' ? 'bg-purple-600 text-white' : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+            }`}>
+              <DollarSign className="w-5 h-5" />
+            </div>
+            <span className="font-mono text-xs font-black px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              3. FINANCEIRO
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black text-white tracking-tight flex items-center gap-1.5">
+              <span>Faturamento</span>
+              <span className="text-purple-400 text-xs font-mono">🟣</span>
+            </h3>
+            <p className="text-[11px] text-neutral-400 mt-1 line-clamp-1">
+              Faturas por romaneio, parcelas e fluxo de caixa
+            </p>
+          </div>
+        </button>
+
+        {/* 4️⃣ CONFIGURAÇÕES (⚙ Cinza) */}
+        <button
+          onClick={() => handleSelecionarModulo('CONFIGURACOES')}
+          className={`p-4 sm:p-5 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
+            activeModulo === 'CONFIGURACOES'
+              ? 'bg-neutral-700/30 border-neutral-500 shadow-lg shadow-neutral-500/10 ring-1 ring-neutral-500/50'
+              : 'bg-neutral-900/80 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+              activeModulo === 'CONFIGURACOES' ? 'bg-neutral-600 text-white' : 'bg-neutral-800 text-neutral-300 border border-neutral-700'
+            }`}>
+              <Sliders className="w-5 h-5" />
+            </div>
+            <span className="font-mono text-xs font-black px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700">
+              4. GESTÃO
+            </span>
+          </div>
+          <div>
+            <h3 className="text-base font-black text-white tracking-tight flex items-center gap-1.5">
+              <span>Configurações</span>
+              <span className="text-neutral-400 text-xs font-mono">⚙</span>
+            </h3>
+            <p className="text-[11px] text-neutral-400 mt-1 line-clamp-1">
+              Empresa, clientes, usuários, backup e parâmetros
+            </p>
+          </div>
+        </button>
+
       </div>
 
-      {activeTab === 'PESAGEM' && (
-        <FilaRolosAguardandoPesagem />
-      )}
+      {/* ========================================================================= */}
+      {/* FLUXO OPERACIONAL ESPERADO DA EMPRESA RB SOUZA                            */}
+      {/* Entrada de Fios ↓ Programação ↓ Produção ↓ Retirada ↓ Pesagem ↓ Estoque de Rolos ↓ Expedição ↓ Romaneio */}
+      {/* ========================================================================= */}
+      <div className="bg-black/40 border border-neutral-800/80 rounded-2xl p-4 overflow-x-auto">
+        <div className="flex items-center gap-2 min-w-max text-[11px] font-mono">
+          <span className="text-neutral-500 font-bold uppercase tracking-wider text-[10px] mr-2">
+            Fluxo Físico & Administrativo:
+          </span>
 
-      {activeTab === 'ENTRADAS' && (
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
-          <table className="w-full text-left text-sm text-neutral-400">
-            <thead className="bg-neutral-950/50 text-xs uppercase text-neutral-500">
-              <tr>
-                <th className="px-6 py-4 font-medium">Data</th>
-                <th className="px-6 py-4 font-medium">Cliente</th>
-                <th className="px-6 py-4 font-medium">NF</th>
-                <th className="px-6 py-4 font-medium">Tipo de Fio</th>
-                <th className="px-6 py-4 font-medium">Título do Fio</th>
-                <th className="px-6 py-4 font-medium">Tipo Entrada</th>
-                <th className="px-6 py-4 font-medium">Qtd</th>
-                <th className="px-6 py-4 font-medium">Peso Líq.</th>
-                <th className="px-6 py-4 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {entradas.map(entrada => {
-                const cliente = clientes.find(c => c.id === entrada.clienteId);
-                return (
-                  <tr key={entrada.id} className="hover:bg-neutral-800/50 transition-colors">
-                    <td className="px-6 py-4">{new Date(entrada.dataLancamento).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 text-white">{cliente?.nomeFantasia}</td>
-                    <td className="px-6 py-4">{entrada.nfNumero}</td>
-                    <td className="px-6 py-4">{entrada.tipoFio}</td>
-                    <td className="px-6 py-4 text-white">{entrada.tituloFio}</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${entrada.tipoLancamento === 'CAIXAS' ? 'bg-blue-500/10 text-blue-400' : 'bg-purple-500/10 text-purple-400'}`}>
-                        {entrada.tipoLancamento}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">{entrada.quantidade}</td>
-                    <td className="px-6 py-4">{entrada.pesoLiquido ? `${entrada.pesoLiquido}kg` : '-'}</td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button 
-                          onClick={() => {
-                            setEditingEntradaId(entrada.id);
-                            setEntradaForm(entrada);
-                            setIsModalOpen(true);
-                          }}
-                          className="p-2 text-neutral-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        {user?.role === 'PROGRAMADOR' && (
-                          <button 
-                            onClick={() => {
-                              if (window.confirm('Deseja realmente excluir este registro?')) {
-                                deleteEntrada(entrada.id);
-                                toast.success('Entrada excluída');
-                              }
-                            }}
-                            className="p-2 text-neutral-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {entradas.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-neutral-500">Nenhuma entrada registrada.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'EXPEDICAO' && activeSub === 'entrada-fios'
+              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            1. Entrada de Fios
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className="px-2.5 py-1 rounded-lg bg-neutral-900 text-neutral-500 border border-neutral-800 font-medium">
+            2. Programação
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'PRODUCAO'
+              ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            3. Produção
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'PRODUCAO' && activeSub === 'aguardando-retirada'
+              ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            4. Retirada
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'EXPEDICAO' && activeSub === 'pesagem'
+              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            5. Pesagem
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'EXPEDICAO' && activeSub === 'estoque-rolos'
+              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            6. Estoque de Rolos
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'EXPEDICAO' && activeSub === 'expedicoes'
+              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            7. Expedição
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'EXPEDICAO' && activeSub === 'romaneios'
+              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            8. Romaneio
+          </span>
+
+          <ArrowRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+
+          <span className={`px-2.5 py-1 rounded-lg border font-bold ${
+            activeModulo === 'FINANCEIRO'
+              ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+              : 'bg-neutral-900 text-neutral-400 border-neutral-800'
+          }`}>
+            9. Faturamento
+          </span>
         </div>
-      )}
+      </div>
 
-      {activeTab === 'SAIDAS' && (
-        <div className="space-y-4">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSaidaTab('SALDO')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${saidaTab === 'SALDO' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800/50'}`}
-            >
-              Saldo (Caixas)
-            </button>
-            <button
-              onClick={() => setSaidaTab('ROLOS')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${saidaTab === 'ROLOS' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800/50'}`}
-            >
-              Rolos
-            </button>
-          </div>
+      {/* ========================================================================= */}
+      {/* RENDERIZAÇÃO DO MÓDULO SELECIONADO                                        */}
+      {/* ========================================================================= */}
+      <div className="bg-neutral-900/60 border border-neutral-800/80 rounded-3xl p-5 sm:p-7 shadow-2xl">
+        {activeModulo === 'PRODUCAO' && (
+          <ProducaoModule 
+            activeSub={activeSub} 
+            onNavigateSub={handleNavigateSub}
+            onIrParaPesagem={handleIrParaPesagem}
+          />
+        )}
 
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
-            {saidaTab === 'SALDO' ? (
-              <table className="w-full text-left text-sm text-neutral-400">
-                <thead className="bg-neutral-950/50 text-xs uppercase text-neutral-500">
-                  <tr>
-                    <th className="px-6 py-4 font-medium">Data</th>
-                    <th className="px-6 py-4 font-medium">Cliente</th>
-                    <th className="px-6 py-4 font-medium">Tipo de Fio</th>
-                    <th className="px-6 py-4 font-medium">Título do Fio</th>
-                    <th className="px-6 py-4 font-medium">NF</th>
-                    <th className="px-6 py-4 font-medium">Qtd Caixas</th>
-                    <th className="px-6 py-4 font-medium">Peso Líq.</th>
-                    <th className="px-6 py-4 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-800">
-                  {saidas.filter(s => s.tipoLancamento === 'CAIXAS').map(saida => {
-                    const cliente = clientes.find(c => c.id === saida.clienteId);
-                    return (
-                      <tr key={saida.id} className="hover:bg-neutral-800/50 transition-colors">
-                        <td className="px-6 py-4">{new Date(saida.dataLancamento).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 text-white">{cliente?.nomeFantasia}</td>
-                        <td className="px-6 py-4">{saida.tipoFio}</td>
-                        <td className="px-6 py-4 text-white">{saida.tituloFio}</td>
-                        <td className="px-6 py-4">{saida.nfNumero}</td>
-                        <td className="px-6 py-4">{saida.quantidade}</td>
-                        <td className="px-6 py-4">{saida.pesoLiquido}kg</td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button 
-                              onClick={() => {
-                                setEditingSaidaId(saida.id);
-                                setSaidaForm(saida);
-                                setIsSaidaModalOpen(true);
-                              }}
-                              className="p-2 text-neutral-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            {user?.role === 'PROGRAMADOR' && (
-                              <button 
-                                onClick={() => {
-                                  if (window.confirm('Deseja realmente excluir este registro?')) {
-                                    deleteSaida(saida.id);
-                                    toast.success('Saída excluída');
-                                  }
-                                }}
-                                className="p-2 text-neutral-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {saidas.filter(s => s.tipoLancamento === 'CAIXAS').length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-8 text-center text-neutral-500">Nenhuma saída de caixa registrada.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            ) : (
-              <table className="w-full text-left text-sm text-neutral-400">
-                <thead className="bg-neutral-950/50 text-xs uppercase text-neutral-500">
-                  <tr>
-                    <th className="px-6 py-4 font-medium">Data</th>
-                    <th className="px-6 py-4 font-medium">Cliente</th>
-                    <th className="px-6 py-4 font-medium">OP</th>
-                    <th className="px-6 py-4 font-medium">Rolo</th>
-                    <th className="px-6 py-4 font-medium">Metros/Voltas</th>
-                    <th className="px-6 py-4 font-medium">Peso Líq.</th>
-                    <th className="px-6 py-4 font-medium">Valor</th>
-                    <th className="px-6 py-4 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-800">
-                  {saidas.filter(s => s.tipoLancamento === 'ROLETES').map(saida => {
-                    const cliente = clientes.find(c => c.id === saida.clienteId);
-                    const op = ops.find(o => o.id === saida.opId);
-                    const rolo = rolos.find(r => r.id === saida.roloId);
-                    return (
-                      <tr key={saida.id} className="hover:bg-neutral-800/50 transition-colors">
-                        <td className="px-6 py-4">{new Date(saida.dataLancamento).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 text-white">{cliente?.nomeFantasia}</td>
-                        <td className="px-6 py-4">{op?.codigo}</td>
-                        <td className="px-6 py-4">{rolo?.numeroRolo}</td>
-                        <td className="px-6 py-4">{saida.metros ? `${saida.metros}m` : `${saida.voltas}v`}</td>
-                        <td className="px-6 py-4">{saida.pesoLiquido}kg</td>
-                        <td className="px-6 py-4 text-emerald-400">R$ {saida.valorCobrado?.toFixed(2)}</td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button 
-                              onClick={() => {
-                                setEditingSaidaId(saida.id);
-                                setSaidaForm(saida);
-                                setIsSaidaModalOpen(true);
-                              }}
-                              className="p-2 text-neutral-500 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            {user?.role === 'PROGRAMADOR' && (
-                              <button 
-                                onClick={() => {
-                                  if (window.confirm('Deseja realmente excluir este registro?')) {
-                                    deleteSaida(saida.id);
-                                    toast.success('Saída excluída');
-                                  }
-                                }}
-                                className="p-2 text-neutral-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {saidas.filter(s => s.tipoLancamento === 'ROLETES').length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-6 py-8 text-center text-neutral-500">Nenhuma saída de rolo registrada.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      )}
+        {activeModulo === 'EXPEDICAO' && (
+          <ExpedicaoModule 
+            activeSub={activeSub} 
+            onNavigateSub={handleNavigateSub}
+            onAbrirFaturamentoDireto={handleAbrirFaturamentoDireto}
+          />
+        )}
 
-      {activeTab === 'FATURAMENTO' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {clientes.map(cliente => {
-            const saidasCliente = saidas.filter(s => s.clienteId === cliente.id && s.tipoLancamento === 'ROLETES');
-            
-            let valorTotal = saidasCliente.reduce((acc, s) => acc + (s.valorCobrado || 0), 0);
+        {activeModulo === 'FINANCEIRO' && (
+          <FinanceiroModule 
+            activeSub={activeSub} 
+            onNavigateSub={handleNavigateSub}
+            expedicaoParaFaturarInicial={expedicaoFaturandoDireto}
+          />
+        )}
 
-            if (valorTotal === 0) return null;
+        {activeModulo === 'CONFIGURACOES' && (
+          <ConfiguracoesModule 
+            activeSub={activeSub} 
+            onNavigateSub={handleNavigateSub}
+          />
+        )}
+      </div>
 
-            return (
-              <div key={cliente.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
-                <h3 className="text-xl font-bold text-white mb-2">{cliente.nomeFantasia}</h3>
-                <div className="text-sm text-neutral-400 mb-4">
-                  Cobrança por {cliente.tipoCobranca.toLowerCase()} (R$ {cliente.valorCobrado.toFixed(2)})
-                </div>
-                <div className="flex justify-between items-end">
-                  <div>
-                    <span className="text-neutral-500 block text-sm">Valor Faturado</span>
-                    <span className="text-3xl font-bold text-emerald-400">R$ {valorTotal.toFixed(2)}</span>
-                  </div>
-                  <div className="text-right text-sm">
-                    <span className="text-white block">{saidasCliente.length} rolos</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-2xl my-8">
-            <div className="flex justify-between items-center p-6 border-b border-neutral-800">
-              <h2 className="text-2xl font-bold text-white">{editingEntradaId ? 'Editar Entrada' : 'Nova Entrada'}</h2>
-              <button onClick={() => {
-                setIsModalOpen(false);
-                setEditingEntradaId(null);
-              }} className="text-neutral-400 hover:text-white">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <form onSubmit={handleEntradaSubmit} className="p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Cliente *</label>
-                  <select required value={entradaForm.clienteId} onChange={e => setEntradaForm({...entradaForm, clienteId: e.target.value, tipoFio: '', tituloFio: ''})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                    <option value="">Selecione um cliente</option>
-                    {clientes.map(c => (
-                      <option key={c.id} value={c.id}>{c.nomeFantasia || c.razaoSocial}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Tipo de Fio *</label>
-                  <select required disabled={!entradaForm.clienteId} value={entradaForm.tipoFio} onChange={e => setEntradaForm({...entradaForm, tipoFio: e.target.value, tituloFio: ''})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50">
-                    <option value="">Selecione o tipo de fio</option>
-                    {entradaForm.clienteId && Array.from(new Set(fiosCliente.filter(f => f.clienteId === entradaForm.clienteId).map(f => f.tipoFio))).filter(Boolean).map(tipo => (
-                      <option key={tipo} value={tipo}>{tipo}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Título do Fio *</label>
-                  <select required disabled={!entradaForm.tipoFio} value={entradaForm.tituloFio} onChange={e => setEntradaForm({...entradaForm, tituloFio: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50">
-                    <option value="">Selecione o título do fio</option>
-                    {entradaForm.tipoFio && fiosCliente.filter(f => f.clienteId === entradaForm.clienteId && f.tipoFio === entradaForm.tipoFio).map(f => (
-                      <option key={f.id} value={f.tituloFio}>{f.tituloFio}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Nota Fiscal *</label>
-                  <input type="text" required value={entradaForm.nfNumero} onChange={e => setEntradaForm({...entradaForm, nfNumero: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Tipo *</label>
-                  <select required value={entradaForm.tipoLancamento} onChange={e => setEntradaForm({...entradaForm, tipoLancamento: e.target.value as any})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                    <option value="CAIXAS">Caixas</option>
-                    <option value="ROLETES">Roletes</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Quantidade *</label>
-                  <input type="number" required min="1" value={entradaForm.quantidade || ''} onChange={e => setEntradaForm({...entradaForm, quantidade: parseInt(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-
-                <div className="md:col-span-2 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="retroativo-entrada"
-                    checked={entradaForm.isRetroativo}
-                    onChange={e => setEntradaForm({...entradaForm, isRetroativo: e.target.checked})}
-                    className="w-4 h-4 rounded border-neutral-800 bg-neutral-950 text-blue-600 focus:ring-blue-500"
-                  />
-                  <label htmlFor="retroativo-entrada" className="text-sm font-medium text-neutral-300">Lançamento retroativo</label>
-                </div>
-
-                {entradaForm.isRetroativo && (
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">Data do Lançamento *</label>
-                    <input 
-                      type="date" 
-                      required 
-                      value={entradaForm.dataLancamento} 
-                      onChange={e => setEntradaForm({...entradaForm, dataLancamento: e.target.value})} 
-                      className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                    />
-                  </div>
-                )}
-
-                <div className={entradaForm.isRetroativo ? "" : "md:col-span-2"}>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Observação</label>
-                  <input 
-                    type="text" 
-                    value={entradaForm.observacao || ''} 
-                    onChange={e => setEntradaForm({...entradaForm, observacao: e.target.value})} 
-                    placeholder="Ex: Lançamento de histórico"
-                    className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                  />
-                </div>
-
-                {entradaForm.tipo === 'CAIXAS' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Peso Bruto (kg)</label>
-                      <input type="number" step="0.01" value={entradaForm.pesoBruto || ''} onChange={e => setEntradaForm({...entradaForm, pesoBruto: parseFloat(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Peso Líquido (kg)</label>
-                      <input type="number" step="0.01" value={entradaForm.pesoLiquido || ''} onChange={e => setEntradaForm({...entradaForm, pesoLiquido: parseFloat(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Qtd. Roletes (se houver)</label>
-                      <input type="number" value={entradaForm.quantidadeRoletes || ''} onChange={e => setEntradaForm({...entradaForm, quantidadeRoletes: parseInt(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="mt-8 flex justify-end gap-4">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 text-neutral-400 hover:text-white font-medium transition-colors">
-                  Cancelar
-                </button>
-                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium transition-colors shadow-lg shadow-blue-500/20">
-                  Registrar Entrada
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {isSaidaModalOpen && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-2xl my-8">
-            <div className="flex justify-between items-center p-6 border-b border-neutral-800">
-              <h2 className="text-2xl font-bold text-white">{editingSaidaId ? 'Editar Saída' : 'Nova Saída'}</h2>
-              <button onClick={() => {
-                setIsSaidaModalOpen(false);
-                setEditingSaidaId(null);
-              }} className="text-neutral-400 hover:text-white">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaidaSubmit} className="p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Tipo de Saída *</label>
-                  <select required value={saidaForm.tipoLancamento} onChange={e => setSaidaForm({...saidaForm, tipoLancamento: e.target.value as any})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                    <option value="CAIXAS">Saldo (Caixas)</option>
-                    <option value="ROLETES">Rolos</option>
-                  </select>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Cliente *</label>
-                  <select required value={saidaForm.clienteId} onChange={e => setSaidaForm({...saidaForm, clienteId: e.target.value, tipoFio: '', tituloFio: ''})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                    <option value="">Selecione um cliente</option>
-                    {clientes.map(c => (
-                      <option key={c.id} value={c.id}>{c.nomeFantasia || c.razaoSocial}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {saidaForm.tipoLancamento === 'CAIXAS' ? (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Tipo de Fio *</label>
-                      <select required disabled={!saidaForm.clienteId} value={saidaForm.tipoFio} onChange={e => setSaidaForm({...saidaForm, tipoFio: e.target.value, tituloFio: ''})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50">
-                        <option value="">Selecione o tipo de fio</option>
-                        {saidaForm.clienteId && Array.from(new Set(fiosCliente.filter(f => f.clienteId === saidaForm.clienteId).map(f => f.tipoFio))).filter(Boolean).map(tipo => (
-                          <option key={tipo} value={tipo}>{tipo}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Título do Fio *</label>
-                      <select required disabled={!saidaForm.tipoFio} value={saidaForm.tituloFio} onChange={e => setSaidaForm({...saidaForm, tituloFio: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50">
-                        <option value="">Selecione o título do fio</option>
-                        {saidaForm.tipoFio && fiosCliente.filter(f => f.clienteId === saidaForm.clienteId && f.tipoFio === saidaForm.tipoFio).map(f => (
-                          <option key={f.id} value={f.tituloFio}>{f.tituloFio}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">NF *</label>
-                      <input type="text" required value={saidaForm.nfNumero} onChange={e => setSaidaForm({...saidaForm, nfNumero: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Quantidade de Caixas *</label>
-                      <input type="number" required min="1" value={saidaForm.quantidade || ''} onChange={e => setSaidaForm({...saidaForm, quantidade: parseInt(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Peso Líquido (kg) *</label>
-                      <input type="number" step="0.01" required value={saidaForm.pesoLiquido || ''} onChange={e => setSaidaForm({...saidaForm, pesoLiquido: parseFloat(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">OP *</label>
-                      <select required value={saidaForm.opId} onChange={e => setSaidaForm({...saidaForm, opId: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                        <option value="">Selecione a OP</option>
-                        {ops.filter(o => o.clienteId === saidaForm.clienteId).map(o => (
-                          <option key={o.id} value={o.id}>{o.codigo}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Rolo *</label>
-                      <select required value={saidaForm.roloId} onChange={e => setSaidaForm({...saidaForm, roloId: e.target.value})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-                        <option value="">Selecione o Rolo</option>
-                        {rolos.filter(r => r.opId === saidaForm.opId && r.status === 'FINALIZADO').map(r => (
-                          <option key={r.id} value={r.id}>Rolo {r.numeroRolo}</option>
-                        ))}
-                      </select>
-                    </div>
-                    {(() => {
-                      const selectedOp = ops.find(o => o.id === saidaForm.opId);
-                      const isM3M4 = selectedOp?.maquina === 'MAQUINA 3' || selectedOp?.maquina === 'MAQUINA 4';
-                      return (
-                        <div>
-                          <label className="block text-sm font-medium text-neutral-300 mb-2">{isM3M4 ? 'Voltas *' : 'Metros *'}</label>
-                          <input type="number" required value={isM3M4 ? (saidaForm.voltas || '') : (saidaForm.metros || '')} onChange={e => {
-                            const val = parseInt(e.target.value);
-                            const cliente = clientes.find(c => c.id === saidaForm.clienteId);
-                            // Se for cobrança por metro e for M3/M4 (voltas), como cobrar?
-                            // O prompt diz: "Faturamento: por rolo (qtd * valor) ou por metro (metros * valor)."
-                            // Vamos assumir que se for voltas, a cobrança por metro usa voltas como base ou não se aplica.
-                            const valorCobrado = cliente?.tipoCobranca === 'METRO' ? val * (cliente.valorCobrado || 0) : (cliente?.valorCobrado || 0);
-                            if (isM3M4) {
-                              setSaidaForm({...saidaForm, voltas: val, metros: 0, valorCobrado});
-                            } else {
-                              setSaidaForm({...saidaForm, metros: val, voltas: 0, valorCobrado});
-                            }
-                          }} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        </div>
-                      );
-                    })()}
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Peso Líquido (kg) *</label>
-                      <input type="number" step="0.01" required value={saidaForm.pesoLiquido || ''} onChange={e => setSaidaForm({...saidaForm, pesoLiquido: parseFloat(e.target.value)})} className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">Valor Cobrado (R$)</label>
-                      <input type="number" step="0.01" readOnly value={saidaForm.valorCobrado || ''} className="w-full bg-neutral-950 border border-neutral-800 text-neutral-400 rounded-xl py-3 px-4 focus:outline-none" />
-                    </div>
-                  </>
-                )}
-
-                <div className="md:col-span-2 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="retroativo-saida"
-                    checked={saidaForm.isRetroativo}
-                    onChange={e => setSaidaForm({...saidaForm, isRetroativo: e.target.checked})}
-                    className="w-4 h-4 rounded border-neutral-800 bg-neutral-950 text-blue-600 focus:ring-blue-500"
-                  />
-                  <label htmlFor="retroativo-saida" className="text-sm font-medium text-neutral-300">Lançamento retroativo</label>
-                </div>
-
-                {saidaForm.isRetroativo && (
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">Data do Lançamento *</label>
-                    <input 
-                      type="date" 
-                      required 
-                      value={saidaForm.dataLancamento} 
-                      onChange={e => setSaidaForm({...saidaForm, dataLancamento: e.target.value})} 
-                      className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                    />
-                  </div>
-                )}
-
-                <div className={saidaForm.isRetroativo ? "" : "md:col-span-2"}>
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">Observação</label>
-                  <input 
-                    type="text" 
-                    value={saidaForm.observacao || ''} 
-                    onChange={e => setSaidaForm({...saidaForm, observacao: e.target.value})} 
-                    placeholder="Ex: Lançamento de histórico"
-                    className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                  />
-                </div>
-              </div>
-
-              <div className="mt-8 flex justify-end gap-4">
-                <button type="button" onClick={() => setIsSaidaModalOpen(false)} className="px-6 py-3 text-neutral-400 hover:text-white font-medium transition-colors">
-                  Cancelar
-                </button>
-                <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white px-8 py-3 rounded-xl font-medium transition-colors shadow-lg shadow-purple-500/20">
-                  Registrar Saída
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

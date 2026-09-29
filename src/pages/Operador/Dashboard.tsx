@@ -25,7 +25,7 @@ import {
 import toast from 'react-hot-toast';
 import { cn, generateId } from '../../lib/utils';
 import { supabase } from '../../lib/supabase';
-import { carregarOperadores as fetchOperadoresSupabase } from '../../hooks/useOperadores';
+import { carregarOperadores as fetchOperadoresSupabase, EVENT_OPERADORES_UPDATED } from '../../hooks/useOperadores';
 import { ModalConferencia } from './ModalConferencia';
 import { TelaRevisaoRolo } from './TelaRevisaoRolo';
 import { TelaRetiradaRolo, OcorrenciaRetiradaItem } from './TelaRetiradaRolo';
@@ -117,8 +117,17 @@ export default function DashboardOperador() {
       )
       .subscribe();
 
+    // SPRINT 3.4.1: Sincronização em tempo real quando o operador mudar de máquina no cadastro
+    const handleOperadoresUpdate = () => {
+      carregarOperadores();
+    };
+    window.addEventListener(EVENT_OPERADORES_UPDATED, handleOperadoresUpdate);
+    window.addEventListener('storage', handleOperadoresUpdate);
+
     return () => {
       supabase.removeChannel(opChannel);
+      window.removeEventListener(EVENT_OPERADORES_UPDATED, handleOperadoresUpdate);
+      window.removeEventListener('storage', handleOperadoresUpdate);
     };
   }, []);
 
@@ -149,8 +158,24 @@ export default function DashboardOperador() {
   const [recoveryData, setRecoveryData] = useState<any | null>(null);
   const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState<boolean>(false);
 
-  // Portadas concluídas do rolo atual (0 até totalPortadas)
-  const [portadasAtual, setPortadasAtual] = useState<number>(0);
+  // SPRINT 3.4.1: Contadores Sincronizados de Portadas
+  // 1. Contador do Rolo
+  // 2. Contador do Operador
+  // 3. Contador da OP
+  // Ao finalizar uma portada, os 3 contadores incrementam juntos e permanecem sincronizados.
+  // Ao iniciar um novo rolo, todos os contadores iniciam obrigatoriamente em 0 Portadas.
+  const [contadorRolo, setContadorRolo] = useState<number>(0);
+  const [contadorOperador, setContadorOperador] = useState<number>(0);
+  const [contadorOP, setContadorOP] = useState<number>(0);
+
+  // Mantém portadasAtual para retrocompatibilidade em todo o componente
+  const portadasAtual = contadorRolo;
+  const setPortadasAtual = (val: number | ((prev: number) => number)) => {
+    const nextVal = typeof val === 'function' ? val(contadorRolo) : val;
+    setContadorRolo(nextVal);
+    setContadorOperador(nextVal);
+    setContadorOP(nextVal);
+  };
 
   // Rolos finalizados localmente em memória para sincronização imediata
   const [rolosFinalizadosMemoria, setRolosFinalizadosMemoria] = useState<Record<string, number>>({});
@@ -220,6 +245,38 @@ export default function DashboardOperador() {
       return ['MAQUINA 4', 'RBMAQ4'];
     }
     return [clean];
+  };
+
+  // SPRINT 3.4.1: Regra obrigatória de vínculo Operador <-> Máquina
+  // Cada operador pertence obrigatoriamente a uma única máquina.
+  // Ao abrir o painel da Máquina 1, somente os operadores vinculados à Máquina 1 deverão aparecer na seleção.
+  // Operadores de outras máquinas nunca deverão aparecer.
+  const operatorBelongsToMachine = (op: any, targetMaq: string): boolean => {
+    if (!op || !targetMaq) return false;
+
+    const targetNum = targetMaq.replace(/[^0-9]/g, '');
+    const targetVariants = getMachineFilterValues(targetMaq).map(v => v.toUpperCase().trim());
+
+    // 1. Vínculo direto em op.maquina (string)
+    if (op.maquina) {
+      const opMaqStr = String(op.maquina).toUpperCase().trim();
+      const opNum = opMaqStr.replace(/[^0-9]/g, '');
+      if (targetNum && opNum === targetNum) return true;
+      if (targetVariants.includes(opMaqStr)) return true;
+    }
+
+    // 2. Vínculo em op.maquinas_autorizadas ou op.maquinasAutorizadas (array)
+    const list = op.maquinas_autorizadas || op.maquinasAutorizadas;
+    if (Array.isArray(list) && list.length > 0) {
+      return list.some((item: any) => {
+        const itemStr = String(item).toUpperCase().trim();
+        const itemNum = itemStr.replace(/[^0-9]/g, '');
+        if (targetNum && itemNum === targetNum) return true;
+        return targetVariants.includes(itemStr);
+      });
+    }
+
+    return false;
   };
 
   // Consultar a tabela public.ordens_producao via Supabase
@@ -474,16 +531,26 @@ export default function DashboardOperador() {
     return () => clearInterval(interval);
   }, [cicloInicioEm, estadoOperador]);
 
-  // Lista de operadores ativos carregados diretamente do Supabase (Sprint 2.5.1)
+  // SPRINT 3.4.1: Lista de operadores vinculados exclusivamente à máquina atual
+  // Cada operador pertence obrigatoriamente a uma única máquina.
+  // Ao abrir o painel da Máquina 1, somente os operadores vinculados à Máquina 1 deverão aparecer na seleção.
+  // Operadores de outras máquinas nunca deverão aparecer.
   const operadoresAtivos = useMemo(() => {
-    return operadoresSupabase.map(op => ({
-      id: String(op.id),
-      nome: String(op.nome || ''),
-      matricula: String(op.matricula || ''),
-      status: (op.status || (op.ativo !== false ? 'ATIVO' : 'INATIVO')) as 'ATIVO' | 'INATIVO',
-      maquinasAutorizadas: (op.maquinas_autorizadas || op.maquinasAutorizadas || ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4']) as any[]
-    }));
-  }, [operadoresSupabase]);
+    return (operadoresSupabase || [])
+      .filter(op => {
+        const isAtivo = op.status === 'ATIVO' || op.ativo !== false;
+        if (!isAtivo) return false;
+        return operatorBelongsToMachine(op, maquina);
+      })
+      .map(op => ({
+        id: String(op.id),
+        nome: String(op.nome || ''),
+        matricula: String(op.matricula || ''),
+        status: (op.status || (op.ativo !== false ? 'ATIVO' : 'INATIVO')) as 'ATIVO' | 'INATIVO',
+        maquina: maquina,
+        maquinasAutorizadas: [maquina] as any[]
+      }));
+  }, [operadoresSupabase, maquina]);
 
   // Objeto do operador atual
   const currentOperador = useMemo(() => {
@@ -924,11 +991,15 @@ export default function DashboardOperador() {
     const atualizadoHistorico = [...historicoOperadores, novoHistoricoItem];
     setHistoricoOperadores(atualizadoHistorico);
 
+    const seqAtual = (Number(activeOP?.quantidade_produzida ?? produzidos ?? 0) + 1);
+    const planejadoTotal = Number(activeOP?.quantidade_planejada ?? activeOP?.qtdRolos ?? 1);
+    const roloIdentificadorOperador = `Rolo ${seqAtual} de ${planejadoTotal}`;
+
     // Registra evento de auditoria e rastreabilidade
     addEventoProducao({
       id: generateId(),
       opId: activeOP?.id || '',
-      roloId: `${activeOP?.codigo}-R${produzidos + 1}`,
+      roloId: roloIdentificadorOperador,
       operadorId: novoOperadorTransferId,
       machineCode: maquina as any,
       tipoEvento: 'TROCA_OPERADOR',
@@ -1032,7 +1103,9 @@ export default function DashboardOperador() {
     if (!activeOP) return;
     const agora = new Date().toISOString();
     const operadorNome = currentOperador?.nome || 'Operador';
-    const roloIdentificador = `${activeOP.codigo}-R${(Number(activeOP.quantidade_produzida ?? produzidos ?? 0) + 1)}`;
+    const seqAtual = (Number(activeOP.quantidade_produzida ?? produzidos ?? 0) + 1);
+    const planejadoTotal = Number(activeOP.quantidade_planejada ?? activeOP.qtdRolos ?? 1);
+    const roloIdentificador = `Rolo ${seqAtual} de ${planejadoTotal}`;
 
     const descricoes: Record<string, string> = {
       PRODUCAO_INICIADA: `Produção iniciada pelo operador ${operadorNome} na máquina ${maquina}`,
@@ -1107,7 +1180,10 @@ export default function DashboardOperador() {
 
     const agora = new Date().toISOString();
     setCicloInicioEm(agora);
-    setPortadasAtual(0);
+    // SPRINT 3.4.1: Ao iniciar um novo rolo, todos os contadores iniciam obrigatoriamente em 0 Portadas
+    setContadorRolo(0);
+    setContadorOperador(0);
+    setContadorOP(0);
     setOcorrenciasCicloAtual([]);
     setTempoProducao('00:00:00');
 
@@ -1134,17 +1210,21 @@ export default function DashboardOperador() {
 
     updateOP(activeOP.id, { status: 'EM_ANDAMENTO', inicio: agora } as any);
 
+    const seqAtualProd = (Number(activeOP.quantidade_produzida ?? produzidos ?? 0) + 1);
+    const planejadoTotalProd = Number(activeOP.quantidade_planejada ?? activeOP.qtdRolos ?? 1);
+    const roloControleOperador = `Rolo ${seqAtualProd} de ${planejadoTotalProd}`;
+
     addEventoProducao({
       id: generateId(),
       opId: activeOP.id,
-      roloId: `${activeOP.codigo}-R${produzidos + 1}`,
+      roloId: roloControleOperador,
       operadorId: selectedOperadorId,
       machineCode: maquina as any,
       tipoEvento: 'INICIO_PRODUCAO',
       portadasNoEvento: 0,
       timestampInicio: agora,
       createdAt: agora,
-      observacao: `Início de produção da OP ${activeOP.codigo} com conferência realizada por ${currentOperador?.nome || 'Operador'}`
+      observacao: `Início de produção da OP ${activeOP.codigo} (${roloControleOperador}) com conferência realizada por ${currentOperador?.nome || 'Operador'}`
     });
 
     setRoleStatus('EM_PRODUCAO');
@@ -1169,7 +1249,15 @@ export default function DashboardOperador() {
 
     if (portadasAtual < totalPortadas) {
       const novaPortada = portadasAtual + 1;
-      setPortadasAtual(novaPortada);
+      
+      // SPRINT 3.4.1: Ao finalizar uma portada:
+      // - incrementar o contador da OP;
+      // - incrementar o contador do Operador;
+      // - incrementar o contador do Rolo.
+      // Essas três informações permanecem rigorosamente sincronizadas.
+      setContadorRolo(novaPortada);
+      setContadorOperador(novaPortada);
+      setContadorOP(novaPortada);
 
       // Gravação no Supabase (producao_operador e ordens_producao)
       try {
@@ -1243,10 +1331,14 @@ export default function DashboardOperador() {
     const novaListaOcorrencias = [...ocorrenciasCicloAtual, textoOcorrencia];
     setOcorrenciasCicloAtual(novaListaOcorrencias);
 
+    const seqAtualOc = (Number(activeOP.quantidade_produzida ?? produzidos ?? 0) + 1);
+    const planejadoTotalOc = Number(activeOP.quantidade_planejada ?? activeOP.qtdRolos ?? 1);
+    const roloControleOc = `Rolo ${seqAtualOc} de ${planejadoTotalOc}`;
+
     addEventoProducao({
       id: generateId(),
       opId: activeOP.id,
-      roloId: `${activeOP.codigo}-R${produzidos + 1}`,
+      roloId: roloControleOc,
       operadorId: selectedOperadorId,
       machineCode: maquina as any,
       tipoEvento: 'OCORRENCIA' as any,
@@ -1358,7 +1450,9 @@ export default function DashboardOperador() {
     const isOpConcluida = novaQtdPendente === 0;
     // Sprint 2.4.3: Após concluir o último rolo, status da OP é atualizado para AGUARDANDO_PESAGEM
     const novoStatusOP = isOpConcluida ? 'AGUARDANDO_PESAGEM' : 'EM_ANDAMENTO';
-    const numeroRoloGerado = `${activeOP.codigo}-R${novaQtdProduzida}`;
+    // Regra definitiva TEXLOG: Durante a produção: "Rolo 1 de 2", "Rolo 2 de 2" (Apenas para controle do operador)
+    // O número oficial (ex: 25561) é gerado automaticamente após a confirmação da pesagem pelo Escritório.
+    const numeroRoloGerado = `Rolo ${novaQtdProduzida} de ${qtdPlanejada}`;
 
     // Histórico de operadores para rastreabilidade
     const historicoFormatado = historicoOperadores.length > 1
@@ -1624,7 +1718,10 @@ export default function DashboardOperador() {
     setRoleStatus('EM_PRODUCAO');
     setCicloInicioEm(agora);
     setTempoProducao('00:00:00');
-    setPortadasAtual(0);
+    // SPRINT 3.4.1: Ao iniciar um novo rolo, todos os contadores iniciam obrigatoriamente em 0 Portadas
+    setContadorRolo(0);
+    setContadorOperador(0);
+    setContadorOP(0);
     setHistoricoOperadores([{
       operadorId: selectedOperadorId,
       operadorNome: currentOperador?.nome || 'Operador',
@@ -1652,7 +1749,9 @@ export default function DashboardOperador() {
   const handleVoltarFilaAposConclusaoOP = () => {
     setActiveOPId(null);
     setInfoOpFinalizada(null);
-    setPortadasAtual(0);
+    setContadorRolo(0);
+    setContadorOperador(0);
+    setContadorOP(0);
     setOcorrenciasCicloAtual([]);
     setOcorrenciasRetirada([]);
     setRoleStatus('EM_PRODUCAO');

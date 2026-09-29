@@ -24,11 +24,9 @@ import {
 import toast from 'react-hot-toast';
 import { supabase } from '../../../lib/supabase';
 import { 
-  getMateriaisPorCliente, 
-  getMovimentacoes, 
-  MateriaPrimaItem, 
-  MovimentacaoMateriaPrima 
-} from '../../../services/materiaPrimaService';
+  getEstoquePorCliente,
+  EstoqueClienteItem 
+} from '../../../services/estoqueClienteService';
 import { NovaEntradaModal } from './NovaEntradaModal';
 import { ClienteModal } from './ClienteModal';
 
@@ -40,9 +38,7 @@ export function ClienteDetalhes() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'INFORMACOES' | 'MATERIA_PRIMA' | 'PRODUCAO' | 'ROLOS' | 'FINANCEIRO'>('INFORMACOES');
 
-  const [materiais, setMateriais] = useState<MateriaPrimaItem[]>([]);
-  const [movimentacoes, setMovimentacoes] = useState<MovimentacaoMateriaPrima[]>([]);
-
+  const [estoqueItens, setEstoqueItens] = useState<EstoqueClienteItem[]>([]);
   const [isNovaEntradaOpen, setIsNovaEntradaOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
@@ -59,7 +55,6 @@ export function ClienteDetalhes() {
 
       if (error) {
         console.warn('Erro ao buscar cliente do Supabase:', error);
-        // Fallback para mock/storage
         setCliente({
           id,
           nome: `Cliente #${id}`,
@@ -76,25 +71,29 @@ export function ClienteDetalhes() {
     }
   };
 
-  // Carregar materiais e movimentações do cliente
-  const carregarMateriais = () => {
+  // Carregar estoque de matéria-prima do cliente
+  const carregarEstoque = async () => {
     if (!id) return;
-    const mats = getMateriaisPorCliente(id);
-    const movs = getMovimentacoes(id);
-    setMateriais(mats);
-    setMovimentacoes(movs);
+    try {
+      const itens = await getEstoquePorCliente(id);
+      setEstoqueItens(itens);
+    } catch (err) {
+      console.error('Erro ao carregar estoque do cliente:', err);
+    }
   };
 
   useEffect(() => {
     carregarCliente();
-    carregarMateriais();
+    carregarEstoque();
 
     const handleUpdate = () => {
-      carregarMateriais();
+      carregarEstoque();
     };
 
+    window.addEventListener('texlog_estoque_updated', handleUpdate);
     window.addEventListener('texlog_materia_prima_updated', handleUpdate);
     return () => {
+      window.removeEventListener('texlog_estoque_updated', handleUpdate);
       window.removeEventListener('texlog_materia_prima_updated', handleUpdate);
     };
   }, [id]);
@@ -128,8 +127,8 @@ export function ClienteDetalhes() {
   }
 
   const nomeExibicao = cliente.razao_social || cliente.nome_fantasia || cliente.nome || `Cliente #${id}`;
-  const totalCaixas = materiais.reduce((acc, m) => acc + (m.saldoCaixas || 0), 0);
-  const totalPesoKg = materiais.reduce((acc, m) => acc + (m.saldoAtualKg || 0), 0);
+  const totalCaixas = estoqueItens.reduce((acc, it) => acc + (it.quantidadeCaixas || 0), 0);
+  const totalPesoKg = estoqueItens.reduce((acc, it) => acc + (it.pesoKg || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -184,7 +183,7 @@ export function ClienteDetalhes() {
       <div className="flex border-b border-neutral-800 overflow-x-auto bg-neutral-900/50 rounded-xl px-2">
         {[
           { id: 'INFORMACOES', label: 'Informações', icon: Info },
-          { id: 'MATERIA_PRIMA', label: 'Matéria-Prima', icon: Package, badge: materiais.length > 0 ? materiais.length : undefined },
+          { id: 'MATERIA_PRIMA', label: 'Matéria-Prima', icon: Package, badge: estoqueItens.length > 0 ? estoqueItens.length : undefined },
           { id: 'PRODUCAO', label: 'Produção', icon: Play, tag: 'Em breve' },
           { id: 'ROLOS', label: 'Rolos', icon: Disc, tag: 'Em breve' },
           { id: 'FINANCEIRO', label: 'Financeiro', icon: DollarSign, tag: 'Em breve' }
@@ -344,8 +343,8 @@ export function ClienteDetalhes() {
                   <Package className="w-5 h-5" />
                 </div>
                 <div>
-                  <span className="text-xs text-neutral-400 block font-medium">Materiais em Estoque</span>
-                  <span className="text-2xl font-bold text-white tracking-tight">{materiais.length}</span>
+                  <span className="text-xs text-neutral-400 block font-medium">Fios em Estoque</span>
+                  <span className="text-2xl font-bold text-white tracking-tight">{estoqueItens.length}</span>
                 </div>
               </div>
             </div>
@@ -375,12 +374,12 @@ export function ClienteDetalhes() {
             </div>
           </div>
 
-          {/* Tabela de Matéria-Prima Exigida pela Sprint 3.1A */}
+          {/* Tabela de Matéria-Prima: Fio, Cor, Caixas, Peso (kg) */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden shadow-sm">
             <div className="p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-neutral-800">
               <div>
                 <h3 className="text-lg font-bold text-white tracking-tight">Estoque de Matéria-Prima</h3>
-                <p className="text-xs text-neutral-400 mt-0.5">Saldo atual e controle de insumos cadastrados para este cliente</p>
+                <p className="text-xs text-neutral-400 mt-0.5">Saldo atualizado por fio e cor pertencente a este cliente</p>
               </div>
 
               <button
@@ -396,52 +395,50 @@ export function ClienteDetalhes() {
               <table className="w-full text-left text-sm text-neutral-300">
                 <thead className="bg-neutral-950/60 text-xs uppercase text-neutral-400 border-b border-neutral-800">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">Título</th>
-                    <th className="px-6 py-4 font-semibold">Tipo</th>
+                    <th className="px-6 py-4 font-semibold">Fio</th>
                     <th className="px-6 py-4 font-semibold">Cor</th>
-                    <th className="px-6 py-4 font-semibold text-right">Qtd. Caixas</th>
-                    <th className="px-6 py-4 font-semibold text-right">Peso (kg)</th>
-                    <th className="px-6 py-4 font-semibold text-right">Saldo Atual</th>
-                    <th className="px-6 py-4 font-semibold">Última Movimentação</th>
+                    <th className="px-6 py-4 font-semibold text-right">Embalagens</th>
+                    <th className="px-6 py-4 font-semibold text-right">Cones Totais</th>
+                    <th className="px-6 py-4 font-semibold text-right">Peso Médio Cone</th>
+                    <th className="px-6 py-4 font-semibold text-right">Peso Líq. (kg)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800/80">
-                  {materiais.map((mat) => {
-                    const dataFormatada = mat.ultimaMovimentacao 
-                      ? new Date(mat.ultimaMovimentacao).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
-                      : '-';
+                  {estoqueItens.map((item) => (
+                    <tr key={item.id} className="hover:bg-neutral-800/40 transition-colors">
+                      <td className="px-6 py-4 font-medium text-white">
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-mono font-bold text-blue-400">{item.fioNome}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 uppercase font-semibold text-neutral-200">
+                        <span className="px-2.5 py-1 rounded-lg text-xs bg-neutral-800 border border-neutral-700">
+                          {item.cor}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-right text-white">
+                        {item.quantidadeEmbalagens || item.quantidadeCaixas} {item.tipoEmbalagem ? item.tipoEmbalagem.toLowerCase() : 'cx'}
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-right text-blue-400">
+                        {item.totalCones || ((item.quantidadeEmbalagens || item.quantidadeCaixas || 0) * (item.conesPorEmbalagem || 6))} cones
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-right text-purple-400">
+                        {item.pesoMedioConeKg ? `${item.pesoMedioConeKg.toFixed(3)} kg` : '—'}
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-right text-emerald-400">
+                        {item.pesoKg.toFixed(2)} kg
+                      </td>
+                    </tr>
+                  ))}
 
-                    return (
-                      <tr key={mat.id} className="hover:bg-neutral-800/40 transition-colors">
-                        <td className="px-6 py-4 font-mono font-bold text-white">{mat.titulo}</td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-0.5 rounded text-xs font-semibold bg-neutral-800 text-neutral-300 border border-neutral-700">
-                            {mat.tipo}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 uppercase font-medium text-neutral-200">{mat.cor}</td>
-                        <td className="px-6 py-4 font-mono text-right text-neutral-200">{mat.quantidadeCaixas} cx</td>
-                        <td className="px-6 py-4 font-mono text-right text-neutral-200">{mat.pesoKg.toFixed(2)} kg</td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            {mat.saldoCaixas} cx / {mat.saldoAtualKg.toFixed(2)} kg
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-xs text-neutral-400 font-mono">
-                          {dataFormatada}
-                        </td>
-                      </tr>
-                    );
-                  })}
-
-                  {materiais.length === 0 && (
+                  {estoqueItens.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-6 py-12 text-center text-neutral-500">
+                      <td colSpan={6} className="px-6 py-12 text-center text-neutral-500">
                         <div className="max-w-sm mx-auto space-y-3">
                           <Package className="w-10 h-10 text-neutral-600 mx-auto" />
-                          <p className="text-sm font-medium text-neutral-400">Nenhuma matéria-prima cadastrada para este cliente.</p>
+                          <p className="text-sm font-medium text-neutral-400">Nenhum estoque de matéria-prima para este cliente.</p>
                           <p className="text-xs text-neutral-600">
-                            Clique no botão "Nova Entrada" acima para registrar a primeira entrada de matéria-prima.
+                            Clique no botão "Nova Entrada" acima para lançar uma entrada com os fios cadastrados.
                           </p>
                           <button
                             onClick={() => setIsNovaEntradaOpen(true)}
@@ -458,67 +455,6 @@ export function ClienteDetalhes() {
               </table>
             </div>
           </div>
-
-          {/* Histórico Recente de Movimentações */}
-          {movimentacoes.length > 0 && (
-            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden shadow-sm">
-              <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <History className="w-4 h-4 text-blue-400" />
-                    Histórico de Movimentações Registradas
-                  </h3>
-                  <p className="text-xs text-neutral-400 mt-0.5">Auditoria com usuário, data/hora e saldos gerados</p>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-neutral-300">
-                  <thead className="bg-neutral-950/60 uppercase text-neutral-400 border-b border-neutral-800">
-                    <tr>
-                      <th className="px-6 py-3 font-semibold">Data / Hora</th>
-                      <th className="px-6 py-3 font-semibold">Tipo Movimento</th>
-                      <th className="px-6 py-3 font-semibold">Material</th>
-                      <th className="px-6 py-3 font-semibold text-right">Caixas</th>
-                      <th className="px-6 py-3 font-semibold text-right">Peso</th>
-                      <th className="px-6 py-3 font-semibold text-right">Saldo Resultante</th>
-                      <th className="px-6 py-3 font-semibold">Usuário</th>
-                      <th className="px-6 py-3 font-semibold">Observação</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-800/80">
-                    {movimentacoes.map(mov => (
-                      <tr key={mov.id} className="hover:bg-neutral-800/30">
-                        <td className="px-6 py-3 font-mono text-neutral-400">
-                          {new Date(mov.dataHora).toLocaleString('pt-BR')}
-                        </td>
-                        <td className="px-6 py-3">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                            {mov.tipoMovimento}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3 font-mono font-medium text-white">
-                          {mov.titulo} ({mov.tipo} {mov.cor})
-                        </td>
-                        <td className="px-6 py-3 text-right font-mono text-neutral-200">+{mov.quantidadeCaixas} cx</td>
-                        <td className="px-6 py-3 text-right font-mono text-neutral-200">+{mov.pesoKg.toFixed(2)} kg</td>
-                        <td className="px-6 py-3 text-right font-mono text-emerald-400 font-semibold">
-                          {mov.saldoResultanteCaixas} cx / {mov.saldoResultantePesoKg.toFixed(2)} kg
-                        </td>
-                        <td className="px-6 py-3 text-neutral-400 flex items-center gap-1.5">
-                          <User className="w-3.5 h-3.5 text-neutral-500" />
-                          {mov.usuario}
-                        </td>
-                        <td className="px-6 py-3 text-neutral-500 italic max-w-xs truncate">
-                          {mov.observacao || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -583,7 +519,7 @@ export function ClienteDetalhes() {
           isOpen={isNovaEntradaOpen}
           onClose={() => setIsNovaEntradaOpen(false)}
           clientePreselecionado={{ id: cliente.id, nome: nomeExibicao }}
-          onSuccess={() => carregarMateriais()}
+          onSuccess={() => carregarEstoque()}
         />
       )}
 

@@ -106,10 +106,60 @@ export interface OP {
   quantidade_planejada?: number;
   quantidade_produzida?: number;
   quantidade_pendente?: number;
+  // Inteligência de Matéria-Prima & Simulação (Sprint 3.4)
+  loteMateriaPrimaId?: string;
+  loteNumero?: string;
+  reservaTecnicaPercentual?: number;
+  pesoDisponivelMateriaPrimaKg?: number;
+  pesoUtilizavelKg?: number;
+  pesoMedioConeKg?: number;
+  totalConesDisponiveis?: number;
+  metragemMaximaEstimada?: number;
+  rolosCompletosEstimados?: number;
+  saldoPrevistoKg?: number;
   status: 'PENDENTE' | 'PREPARANDO' | 'EM_ANDAMENTO' | 'AGUARDANDO_PESAGEM' | 'FINALIZADA' | 'PARADA' | 'CANCELADA';
   createdAt: string;
   updatedAt: string;
   fim?: string;
+}
+
+export interface Embalagem {
+  id: string;
+  nome: string;
+  conesPadrao: number;
+  ativa: boolean;
+  criadoEm?: string;
+  atualizadoEm?: string;
+}
+
+export type ClassificacaoMateriaPrima = 
+  | 'MATERIAL_NOVO' 
+  | 'SALDO_CLIENTE' 
+  | 'RETORNO_PRODUCAO' 
+  | 'OUTRO';
+
+export interface LoteMateriaPrima {
+  id: string;
+  entradaId?: string;
+  numeroNf: string;
+  dataEntrada: string;
+  clienteId: string | number;
+  clienteNome: string;
+  fioId?: string | number;
+  fioNome: string;
+  tipo?: string;
+  cor: string;
+  lote: string;
+  tipoEmbalagem: string;
+  quantidadeEmbalagens: number;
+  conesPorEmbalagem: number;
+  totalCones: number;
+  pesoLiquido: number;
+  pesoDisponivelKg: number;
+  pesoMedioConeKg: number;
+  classificacao: ClassificacaoMateriaPrima;
+  criadoEm: string;
+  atualizadoEm: string;
 }
 
 export type RoloStatus = 
@@ -118,14 +168,38 @@ export type RoloStatus =
   | 'AGUARDANDO_REVISAO'
   | 'RETIRADA_EM_ANDAMENTO'
   | 'AGUARDANDO_PESAGEM'
+  | 'EM_CONFERENCIA_ESCRITORIO'
   | 'PESADO'
   | 'EM_ESTOQUE'
   | 'ROMANEADO'
+  | 'EXPEDIDO'
+  | 'PENDENTE_FATURAMENTO'
+  | 'LIBERADO_FINANCEIRO'
   | 'FATURADO'
   | 'CANCELADO'
   | 'EM_ANDAMENTO' 
   | 'FINALIZADO' 
   | 'PARADO';
+
+export interface Empresa {
+  id: string;
+  razaoSocial: string;
+  nomeFantasia: string;
+  logotipo: string;
+  cnpj: string;
+  inscricaoEstadual: string;
+  endereco: string;
+  numero: string;
+  bairro: string;
+  cidade: string;
+  estado: string;
+  cep: string;
+  telefone: string;
+  celular: string;
+  email: string;
+  site?: string;
+  atualizadoEm?: string;
+}
 
 export interface Rolo {
   id: string;

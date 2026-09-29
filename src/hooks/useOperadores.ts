@@ -15,10 +15,26 @@ export interface OperadorSupabase {
   updated_at?: string;
 }
 
+export const STORAGE_KEY_OPERADORES = 'texlog_operadores_v1';
+export const EVENT_OPERADORES_UPDATED = 'texlog_operadores_updated';
+
+// Sementes padrão conforme Especificação da Sprint 3.4.1:
+// Máquina 1: João, Pedro
+// Máquina 2: Carlos
+// Máquina 3: Marcos
+// Máquina 4: José
+export const DEFAULT_OPERADORES: OperadorSupabase[] = [
+  { id: '1', nome: 'João', matricula: 'OP001', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 1'] },
+  { id: '2', nome: 'Pedro', matricula: 'OP002', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 1'] },
+  { id: '3', nome: 'Carlos', matricula: 'OP003', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 2'] },
+  { id: '4', nome: 'Marcos', matricula: 'OP004', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 3'] },
+  { id: '5', nome: 'José', matricula: 'OP005', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 4'] },
+];
+
 /**
- * Função da ETAPA 2 da SPRINT 2.5.1:
- * Consulta direta ao Supabase, tabela operadores, com fallback resiliente para usuarios caso
- * a tabela operadores ainda não tenha sido criada no schema cache.
+ * Função da ETAPA 2 da SPRINT 2.5.1 / SPRINT 3.4.1:
+ * Consulta direta ao Supabase, tabela operadores, com fallback resiliente para usuarios
+ * e persistência local garantida com operadores vinculados obrigatoriamente a uma única máquina.
  */
 export async function carregarOperadores(apenasAtivos = false): Promise<OperadorSupabase[]> {
   try {
@@ -33,6 +49,9 @@ export async function carregarOperadores(apenasAtivos = false): Promise<Operador
 
     const { data, error } = await query;
     if (!error && data && data.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY_OPERADORES, JSON.stringify(data));
+      } catch {}
       return data;
     }
 
@@ -46,16 +65,20 @@ export async function carregarOperadores(apenasAtivos = false): Promise<Operador
         .order('nome');
 
       if (!usrErr && usuariosData && usuariosData.length > 0) {
-        return usuariosData.map((u: any) => ({
+        const mapped = usuariosData.map((u: any) => ({
           id: u.id,
           nome: u.nome,
           matricula: u.usuario || '',
           ativo: true,
-          status: 'ATIVO',
-          maquinas_autorizadas: u.maquina ? [u.maquina] : ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'],
+          status: 'ATIVO' as const,
+          maquinas_autorizadas: u.maquina ? [u.maquina] : ['MAQUINA 1'],
           criado_em: u.criado_em,
           atualizado_em: u.criado_em,
         }));
+        try {
+          localStorage.setItem(STORAGE_KEY_OPERADORES, JSON.stringify(mapped));
+        } catch {}
+        return mapped;
       }
     }
 
@@ -66,11 +89,29 @@ export async function carregarOperadores(apenasAtivos = false): Promise<Operador
     console.warn('Falha na consulta de operadores:', err?.message || err);
   }
 
-  // Se não houver dados, retorna lista padrão para permitir testes imediatos
-  return [
-    { id: '1', nome: 'Carlos Silva', matricula: 'OP001', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 1', 'MAQUINA 2'] },
-    { id: '2', nome: 'João Ferreira', matricula: 'OP002', ativo: true, status: 'ATIVO', maquinas_autorizadas: ['MAQUINA 3', 'MAQUINA 4'] }
-  ];
+  // 1. Tenta carregar do localStorage
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_OPERADORES);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        if (apenasAtivos) {
+          return parsed.filter((op: any) => op.status === 'ATIVO' || op.ativo !== false);
+        }
+        return parsed;
+      }
+    }
+  } catch {}
+
+  // 2. Se não houver dados, inicializa lista padrão conforme Sprint 3.4.1
+  try {
+    localStorage.setItem(STORAGE_KEY_OPERADORES, JSON.stringify(DEFAULT_OPERADORES));
+  } catch {}
+
+  if (apenasAtivos) {
+    return DEFAULT_OPERADORES.filter(op => op.status === 'ATIVO' || op.ativo !== false);
+  }
+  return DEFAULT_OPERADORES;
 }
 
 export function useOperadores(options: { apenasAtivos?: boolean } = {}) {
@@ -135,8 +176,17 @@ export function useOperadores(options: { apenasAtivos?: boolean } = {}) {
       )
       .subscribe();
 
+    const handleLocalUpdate = () => {
+      fetchOperadores();
+    };
+
+    window.addEventListener(EVENT_OPERADORES_UPDATED, handleLocalUpdate);
+    window.addEventListener('storage', handleLocalUpdate);
+
     return () => {
       supabase.removeChannel(channel);
+      window.removeEventListener(EVENT_OPERADORES_UPDATED, handleLocalUpdate);
+      window.removeEventListener('storage', handleLocalUpdate);
     };
   }, [fetchOperadores, apenasAtivos]);
 

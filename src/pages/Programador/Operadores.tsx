@@ -4,7 +4,7 @@ import { Operador } from '../../types';
 import { Plus, Search, Edit2, Trash2, X, RefreshCw, AlertCircle, Database } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
-import { carregarOperadores as fetchOperadoresSupabase } from '../../hooks/useOperadores';
+import { carregarOperadores as fetchOperadoresSupabase, STORAGE_KEY_OPERADORES, EVENT_OPERADORES_UPDATED } from '../../hooks/useOperadores';
 
 export default function Operadores() {
   const { rolos, ops, eventosProducao } = useStore();
@@ -92,16 +92,17 @@ export default function Operadores() {
 
   const handleOpenModal = (op?: Operador) => {
     if (op) {
+      const maq = op.maquinasAutorizadas?.[0] || 'MAQUINA 1';
       setFormData({
         nome: op.nome,
-        maquinasAutorizadas: op.maquinasAutorizadas || [],
+        maquinasAutorizadas: [maq as any],
         status: op.status
       });
       setEditingId(op.id);
     } else {
       setFormData({
         nome: '',
-        maquinasAutorizadas: ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'],
+        maquinasAutorizadas: ['MAQUINA 1'],
         status: 'ATIVO',
       });
       setEditingId(null);
@@ -116,6 +117,8 @@ export default function Operadores() {
       return;
     }
 
+    const maquinaVinculada = formData.maquinasAutorizadas?.[0] || 'MAQUINA 1';
+
     try {
       if (editingId) {
         let { error } = await supabase
@@ -124,7 +127,8 @@ export default function Operadores() {
             nome: formData.nome.trim(),
             status: formData.status || 'ATIVO',
             ativo: formData.status === 'ATIVO',
-            maquinas_autorizadas: formData.maquinasAutorizadas || ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'],
+            maquinas_autorizadas: [maquinaVinculada],
+            maquina: maquinaVinculada,
             atualizado_em: new Date().toISOString()
           })
           .eq('id', editingId);
@@ -135,7 +139,7 @@ export default function Operadores() {
             .from('usuarios')
             .update({
               nome: formData.nome.trim(),
-              maquina: formData.maquinasAutorizadas?.[0] || 'MAQUINA 1'
+              maquina: maquinaVinculada
             })
             .eq('id', editingId);
           if (usrErr) throw usrErr;
@@ -143,15 +147,38 @@ export default function Operadores() {
           throw error;
         }
 
-        toast.success('Operador atualizado no Supabase');
+        // Sincroniza no localStorage para atualização imediata no painel do Operador
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_OPERADORES);
+          const list = raw ? JSON.parse(raw) : [];
+          const updated = list.map((item: any) => 
+            String(item.id) === String(editingId)
+              ? {
+                  ...item,
+                  nome: formData.nome.trim(),
+                  status: formData.status || 'ATIVO',
+                  ativo: formData.status === 'ATIVO',
+                  maquinas_autorizadas: [maquinaVinculada],
+                  maquina: maquinaVinculada,
+                  atualizado_em: new Date().toISOString()
+                }
+              : item
+          );
+          localStorage.setItem(STORAGE_KEY_OPERADORES, JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent(EVENT_OPERADORES_UPDATED));
+        } catch {}
+
+        toast.success('Operador atualizado com sucesso');
       } else {
+        const novoId = String(Date.now());
         let { error } = await supabase
           .from('operadores')
           .insert([{
             nome: formData.nome.trim(),
             status: formData.status || 'ATIVO',
             ativo: formData.status === 'ATIVO',
-            maquinas_autorizadas: formData.maquinasAutorizadas || ['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4']
+            maquinas_autorizadas: [maquinaVinculada],
+            maquina: maquinaVinculada
           }]);
 
         if (error && error.code === 'PGRST205') {
@@ -163,25 +190,43 @@ export default function Operadores() {
               usuario: formData.nome.toLowerCase().replace(/\s+/g, ''),
               senha: '123',
               tipo: 'OPERADOR',
-              maquina: formData.maquinasAutorizadas?.[0] || 'MAQUINA 1'
+              maquina: maquinaVinculada
             }]);
           if (usrErr) throw usrErr;
         } else if (error) {
           throw error;
         }
 
-        toast.success('Operador cadastrado no Supabase');
+        // Sincroniza no localStorage para atualização imediata no painel do Operador
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_OPERADORES);
+          const list = raw ? JSON.parse(raw) : [];
+          const novoOp = {
+            id: novoId,
+            nome: formData.nome.trim(),
+            matricula: `OP${String(list.length + 1).padStart(3, '0')}`,
+            ativo: formData.status === 'ATIVO',
+            status: formData.status || 'ATIVO',
+            maquinas_autorizadas: [maquinaVinculada],
+            maquina: maquinaVinculada,
+            criado_em: new Date().toISOString()
+          };
+          localStorage.setItem(STORAGE_KEY_OPERADORES, JSON.stringify([...list, novoOp]));
+          window.dispatchEvent(new CustomEvent(EVENT_OPERADORES_UPDATED));
+        } catch {}
+
+        toast.success('Operador cadastrado com sucesso');
       }
       setIsModalOpen(false);
       await carregarOperadores();
     } catch (err: any) {
       console.warn('Aviso ao salvar operador:', err);
-      toast.error(`Erro ao salvar no Supabase: ${err.message || 'Falha na gravação'}`);
+      toast.error(`Erro ao salvar: ${err.message || 'Falha na gravação'}`);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (window.confirm('Deseja realmente excluir este operador do Supabase?')) {
+    if (window.confirm('Deseja realmente excluir este operador?')) {
       try {
         let { error } = await supabase
           .from('operadores')
@@ -198,11 +243,21 @@ export default function Operadores() {
           throw error;
         }
 
-        toast.success('Operador excluído do Supabase');
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_OPERADORES);
+          if (raw) {
+            const list = JSON.parse(raw);
+            const filtered = list.filter((o: any) => String(o.id) !== String(id));
+            localStorage.setItem(STORAGE_KEY_OPERADORES, JSON.stringify(filtered));
+            window.dispatchEvent(new CustomEvent(EVENT_OPERADORES_UPDATED));
+          }
+        } catch {}
+
+        toast.success('Operador excluído com sucesso');
         await carregarOperadores();
       } catch (err: any) {
         console.warn('Aviso ao excluir operador:', err);
-        toast.error(`Erro ao excluir no Supabase: ${err.message || 'Falha ao excluir'}`);
+        toast.error(`Erro ao excluir: ${err.message || 'Falha ao excluir'}`);
       }
     }
   };
@@ -351,14 +406,30 @@ export default function Operadores() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-2">Máquinas Habilitadas</label>
+                <label className="block text-sm font-medium text-neutral-300 mb-1">
+                  Máquina Vinculada *
+                </label>
+                <p className="text-xs text-neutral-500 mb-2">
+                  Cada operador pertence obrigatoriamente a uma única máquina.
+                </p>
                 <div className="grid grid-cols-2 gap-3">
-                  {['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'].map(m => (
-                    <label key={m} className={`flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-colors ${formData.maquinasAutorizadas?.includes(m as any) ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:border-neutral-700'}`}>
-                      <input type="checkbox" className="hidden" checked={formData.maquinasAutorizadas?.includes(m as any)} onChange={() => toggleMaquina(m)} />
-                      <span className="text-sm font-medium">{m}</span>
-                    </label>
-                  ))}
+                  {['MAQUINA 1', 'MAQUINA 2', 'MAQUINA 3', 'MAQUINA 4'].map(m => {
+                    const isSelected = (formData.maquinasAutorizadas?.[0] || 'MAQUINA 1') === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, maquinasAutorizadas: [m as any] })}
+                        className={`flex items-center justify-center p-3 rounded-xl border transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-blue-600/20 border-blue-500 text-blue-400 font-bold shadow-sm'
+                            : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:border-neutral-700'
+                        }`}
+                      >
+                        <span className="text-sm font-medium">{m}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

@@ -15,6 +15,8 @@ export interface RoloHistoricoItem {
   status: RoloStatus | string;
   peso_real_kg?: number | null;
   criado_em?: string;
+  iniciado_em?: string;
+  finalizado_em?: string;
   data_hora_formatada?: string;
   portadas_total?: number;
 }
@@ -66,10 +68,14 @@ export const UltimosRolosProduzidos: React.FC<UltimosRolosProduzidosProps> = ({ 
               op_codigo: opCodigo,
               numero_rolo: r.numero_rolo || `ETQ-PROV-${r.id || 'ROLO'}`,
               cliente_nome: clienteNome,
+              maquina: r.maquina,
+              operador_nome: r.operador_nome || r.operador_responsavel || r.operador,
               status: r.status || 'AGUARDANDO_PESAGEM',
               peso_real_kg: r.peso_real_kg,
               criado_em: r.criado_em || r.finalizado_em,
-              portadas_total: r.portadas_total
+              iniciado_em: r.iniciado_em || r.horario_inicio,
+              finalizado_em: r.finalizado_em || r.horario_termino || r.criado_em,
+              portadas_total: r.portadas_total ?? r.quantidade_portadas
             };
           });
         } else {
@@ -86,10 +92,15 @@ export const UltimosRolosProduzidos: React.FC<UltimosRolosProduzidosProps> = ({ 
               op_id: r.op_id,
               op_codigo: r.op_id ? `OP-${r.op_id}` : '—',
               numero_rolo: r.numero_rolo || `ETQ-PROV-${r.id || 'ROLO'}`,
+              cliente_nome: 'Cliente',
+              maquina: r.maquina,
+              operador_nome: r.operador_nome || r.operador_responsavel || r.operador,
               status: r.status || 'AGUARDANDO_PESAGEM',
               peso_real_kg: r.peso_real_kg,
               criado_em: r.criado_em || r.finalizado_em,
-              portadas_total: r.portadas_total
+              iniciado_em: r.iniciado_em || r.horario_inicio,
+              finalizado_em: r.finalizado_em || r.horario_termino || r.criado_em,
+              portadas_total: r.portadas_total ?? r.quantidade_portadas
             }));
           }
         }
@@ -339,10 +350,12 @@ export const UltimosRolosProduzidos: React.FC<UltimosRolosProduzidosProps> = ({ 
           <thead className="bg-[#181d28] uppercase text-[11px] font-bold text-neutral-400 border-b border-white/10 tracking-wider">
             <tr>
               <th className="px-4 py-3.5">Número do Rolo</th>
-              <th className="px-4 py-3.5">OP</th>
-              <th className="px-4 py-3.5">Cliente</th>
-              <th className="px-4 py-3.5">Data e Hora</th>
-              <th className="px-4 py-3.5">Status Atual</th>
+              <th className="px-4 py-3.5">OP / Cliente</th>
+              <th className="px-4 py-3.5">Máquina</th>
+              <th className="px-4 py-3.5">Operador</th>
+              <th className="px-4 py-3.5">Portadas</th>
+              <th className="px-4 py-3.5">Horários (Início / Fim)</th>
+              <th className="px-4 py-3.5">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -363,22 +376,44 @@ export const UltimosRolosProduzidos: React.FC<UltimosRolosProduzidosProps> = ({ 
                     )}
                   </td>
 
-                  {/* OP */}
-                  <td className="px-4 py-3.5 font-mono font-bold text-neutral-200 whitespace-nowrap">
-                    {item.op_codigo || (item.op_id ? `OP-${item.op_id}` : '—')}
-                  </td>
-
-                  {/* Cliente */}
-                  <td className="px-4 py-3.5 font-medium text-neutral-300 max-w-[200px] truncate" title={item.cliente_nome}>
-                    {item.cliente_nome || '—'}
-                  </td>
-
-                  {/* Data e Hora */}
-                  <td className="px-4 py-3.5 text-neutral-400 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-neutral-500" />
-                      {formatarDataHora(item.criado_em)}
+                  {/* OP & Cliente */}
+                  <td className="px-4 py-3.5 whitespace-nowrap">
+                    <span className="font-mono font-bold text-neutral-200 block">
+                      {item.op_codigo || (item.op_id ? `OP-${item.op_id}` : '—')}
                     </span>
+                    <span className="text-[11px] text-neutral-400 max-w-[160px] truncate block" title={item.cliente_nome}>
+                      {item.cliente_nome || '—'}
+                    </span>
+                  </td>
+
+                  {/* Máquina */}
+                  <td className="px-4 py-3.5 whitespace-nowrap font-mono font-bold text-blue-400">
+                    {item.maquina || '—'}
+                  </td>
+
+                  {/* Operador Responsável */}
+                  <td className="px-4 py-3.5 whitespace-nowrap font-medium text-neutral-200">
+                    {item.operador_nome || '—'}
+                  </td>
+
+                  {/* Total de Portadas */}
+                  <td className="px-4 py-3.5 whitespace-nowrap font-mono font-black text-emerald-400">
+                    {item.portadas_total != null ? `${item.portadas_total} portadas` : '—'}
+                  </td>
+
+                  {/* Horário de Início e Término */}
+                  <td className="px-4 py-3.5 text-neutral-400 whitespace-nowrap text-[11px]">
+                    {item.iniciado_em && item.finalizado_em ? (
+                      <div>
+                        <span className="text-neutral-300 block">De: {formatarDataHora(item.iniciado_em)}</span>
+                        <span className="text-neutral-400 block">Até: {formatarDataHora(item.finalizado_em)}</span>
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-neutral-500" />
+                        {formatarDataHora(item.criado_em)}
+                      </span>
+                    )}
                   </td>
 
                   {/* Status Atual */}
@@ -389,7 +424,7 @@ export const UltimosRolosProduzidos: React.FC<UltimosRolosProduzidosProps> = ({ 
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-neutral-500 space-y-2">
+                <td colSpan={7} className="px-4 py-12 text-center text-neutral-500 space-y-2">
                   <p className="text-sm font-bold text-neutral-400">
                     {busca ? 'Nenhum rolo encontrado para esta busca.' : 'Nenhum rolo produzido registrado no histórico recente.'}
                   </p>

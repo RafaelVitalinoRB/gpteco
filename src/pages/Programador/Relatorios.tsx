@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { useOperadores } from '../../hooks/useOperadores';
-import { FileText, Download, Calendar, TrendingUp, Users, Package, DollarSign } from 'lucide-react';
+import { useEmpresa, formatarEnderecoEmpresa } from '../../services/empresaService';
+import { FileText, Download, Calendar, TrendingUp, Users, Package, DollarSign, Building2, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function Relatorios() {
   const { ops, rolos, entradas, saidas, clientes } = useStore();
   const { operadores } = useOperadores();
+  const { empresa } = useEmpresa();
   const [startDate, setStartDate] = useState(format(new Date().setDate(1), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 
@@ -55,17 +57,58 @@ export default function Relatorios() {
     return acc;
   }, {} as Record<string, number>);
 
+  const handleExportPDF = () => {
+    window.print();
+  };
+
   return (
     <div className="space-y-6">
+      {/* Cabeçalho Institucional Oficial da Empresa */}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          {empresa.logotipo ? (
+            <img 
+              src={empresa.logotipo} 
+              alt={empresa.nomeFantasia} 
+              className="w-14 h-14 rounded-2xl object-cover border border-neutral-700 bg-white p-1" 
+            />
+          ) : (
+            <div className="w-14 h-14 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+              <Building2 className="w-7 h-7" />
+            </div>
+          )}
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-black text-white tracking-tight uppercase">
+                {empresa.nomeFantasia || empresa.razaoSocial}
+              </h2>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                CNPJ: {empresa.cnpj || '—'}
+              </span>
+            </div>
+            <p className="text-xs text-neutral-400 mt-0.5">
+              {empresa.razaoSocial} • IE: {empresa.inscricaoEstadual || '—'}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-0.5">
+              {formatarEnderecoEmpresa(empresa)} • Tel: {empresa.telefone || empresa.celular || '—'}
+            </p>
+          </div>
+        </div>
+
+        <button 
+          onClick={handleExportPDF}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-500/20 cursor-pointer shrink-0"
+        >
+          <Printer className="w-4 h-4" />
+          <span>Exportar PDF / Imprimir</span>
+        </button>
+      </div>
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Relatórios e Fechamento</h1>
-          <p className="text-neutral-400 mt-1">Análise de produção e faturamento por período</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Relatórios e Fechamento</h1>
+          <p className="text-neutral-400 text-xs mt-0.5">Análise consolidada de produção e faturamento por período</p>
         </div>
-        <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-500/20">
-          <Download className="w-5 h-5" />
-          Exportar PDF
-        </button>
       </div>
 
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
