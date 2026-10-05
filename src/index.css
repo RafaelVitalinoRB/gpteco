@@ -1,1 +1,59 @@
 @import "tailwindcss";
+
+/* ==============================================================================
+   SPRINT UX 2 — ACESSIBILIDADE VISUAL & LEGIBILIDADE INDUSTRIAL (TEXLOG ERP)
+   Aumento calibrado de 10% (dentro do intervalo de 8% a 12%) no tamanho da fonte base.
+   Preserva proporções, paddings, ícones e layouts sem quebras ou sobreposições.
+   Prepara a base para futura troca dinâmica: Compacto (100%), Normal (110%), Grande (125%).
+   ============================================================================== */
+
+:root {
+  /* Escala padrão aprovada: ~10% de ganho de legibilidade (17.6px base) */
+  --texlog-font-scale: 1.1;
+  --texlog-base-font-size: calc(16px * var(--texlog-font-scale));
+}
+
+/* Modos futuros preparados (sem ativar nesta Sprint) */
+[data-ui-size="compact"] {
+  --texlog-font-scale: 1.0;
+}
+[data-ui-size="normal"] {
+  --texlog-font-scale: 1.1;
+}
+[data-ui-size="large"] {
+  --texlog-font-scale: 1.25;
+}
+
+html {
+  font-size: var(--texlog-base-font-size);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* Reforço de legibilidade para fontes menores (text-[9px], text-[10px], text-xs) em ambiente fabril */
+.text-\[9px\] {
+  font-size: calc(10px * var(--texlog-font-scale)) !important;
+  line-height: 1.35 !important;
+}
+
+.text-\[10px\] {
+  font-size: calc(11px * var(--texlog-font-scale)) !important;
+  line-height: 1.35 !important;
+}
+
+.text-\[11px\] {
+  font-size: calc(12px * var(--texlog-font-scale)) !important;
+  line-height: 1.4 !important;
+}
+
+/* Inputs, selects, botões e labels com legibilidade reforçada e sem colisão */
+input, select, textarea, button {
+  font-size: inherit;
+}

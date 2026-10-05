@@ -40,6 +40,7 @@ import {
 import { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import GlobalSearch from './GlobalSearch';
+import { logoutUser } from '../services/authService';
 
 interface SubmenuItem {
   id: string;
@@ -72,7 +73,12 @@ export default function Layout() {
     expedicao: true,
     producao: false,
     financeiro: false,
-    configuracoes: false
+    configuracoes: false,
+    planejamento: true,
+    materiais: false,
+    base_operacional: false,
+    relatorios: false,
+    configuracoes_programador: false
   });
 
   // Query params da rota atual
@@ -137,9 +143,9 @@ export default function Layout() {
     }));
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const handleLogout = async () => {
+    await logoutUser();
+    navigate('/login', { replace: true });
   };
 
   // Estrutura Escritório 3.0: 4 Grupos Principais
@@ -228,6 +234,89 @@ export default function Layout() {
         { id: 'backup', name: 'Backup', icon: Database },
         { id: 'impressoes', name: 'Impressões', icon: Printer },
         { id: 'parametros', name: 'Parâmetros Gerais', icon: Sliders }
+      ]
+    }
+  ];
+
+  // Estrutura Programador UX 1: 5 Grupos Visuais Padronizados
+  const gruposProgramador = [
+    {
+      id: 'planejamento',
+      name: 'PLANEJAMENTO',
+      badgeCor: '🟦',
+      corText: 'text-blue-400',
+      corBgHover: 'hover:bg-blue-500/10',
+      corBorderActive: 'border-blue-500/30 bg-blue-500/10 text-blue-300 font-bold',
+      corHeaderBg: 'bg-blue-950/20 border-blue-500/30 text-blue-400',
+      icon: LayoutDashboard,
+      submenus: [
+        { name: 'Dashboard', path: '/programador', icon: LayoutDashboard },
+        { name: 'Agenda de Produção', path: '/programador/maquinas', icon: Calendar },
+        { name: 'Ordens de Produção', path: '/programador/ops', icon: FileText },
+        { name: 'Prioridades', path: '/programador/ops?filtro=prioridades', icon: TrendingUp }
+      ]
+    },
+    {
+      id: 'materiais',
+      name: 'MATERIAIS',
+      badgeCor: '🟩',
+      corText: 'text-emerald-400',
+      corBgHover: 'hover:bg-emerald-500/10',
+      corBorderActive: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 font-bold',
+      corHeaderBg: 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400',
+      icon: Package,
+      submenus: [
+        { name: 'Estoque dos Clientes', path: '/estoque', icon: Package },
+        { name: 'Entradas de Fios', path: '/escritorio?modulo=expedicao&sub=entrada-fios', icon: ArrowDownRight },
+        { name: 'Reservas', path: '/estoque?tab=reservas', icon: Layers },
+        { name: 'Saldo Disponível', path: '/estoque?tab=CLIENTES', icon: CheckCircle2 }
+      ]
+    },
+    {
+      id: 'base_operacional',
+      name: 'BASE OPERACIONAL',
+      badgeCor: '🟧',
+      corText: 'text-amber-400',
+      corBgHover: 'hover:bg-amber-500/10',
+      corBorderActive: 'border-amber-500/30 bg-amber-500/10 text-amber-300 font-bold',
+      corHeaderBg: 'bg-amber-950/20 border-amber-500/30 text-amber-400',
+      icon: Users,
+      submenus: [
+        { name: 'Clientes', path: '/programador/clientes', icon: Users },
+        { name: 'Especificações', path: '/programador/especificacoes', icon: FileText },
+        { name: 'Títulos de Fio', path: '/programador/titulos', icon: Settings },
+        { name: 'Operadores', path: '/programador/operadores', icon: UserCheck },
+        { name: 'Máquinas', path: '/programador/maquinas', icon: Cpu }
+      ]
+    },
+    {
+      id: 'relatorios',
+      name: 'RELATÓRIOS',
+      badgeCor: '🟪',
+      corText: 'text-purple-400',
+      corBgHover: 'hover:bg-purple-500/10',
+      corBorderActive: 'border-purple-500/30 bg-purple-500/10 text-purple-300 font-bold',
+      corHeaderBg: 'bg-purple-950/20 border-purple-500/30 text-purple-400',
+      icon: BarChart3,
+      submenus: [
+        { name: 'Produção Prevista', path: '/programador/relatorios?tipo=prevista', icon: Calendar },
+        { name: 'Produção Realizada', path: '/programador/relatorios', icon: BarChart3 },
+        { name: 'Consumo de Fios', path: '/programador/relatorios?tipo=consumo', icon: TrendingUp },
+        { name: 'Histórico', path: '/escritorio?modulo=producao&sub=historico-producao', icon: Layers }
+      ]
+    },
+    {
+      id: 'configuracoes_programador',
+      name: 'CONFIGURAÇÕES',
+      badgeCor: '⚙',
+      corText: 'text-neutral-400',
+      corBgHover: 'hover:bg-neutral-800',
+      corBorderActive: 'border-neutral-600 bg-neutral-800 text-white font-bold',
+      corHeaderBg: 'bg-neutral-800/40 border-neutral-700 text-neutral-300',
+      icon: Sliders,
+      submenus: [
+        { name: 'Configurações do módulo', path: '/escritorio?modulo=configuracoes&sub=empresa', icon: Sliders },
+        { name: 'Reset Operacional', path: '/administracao/reset-operacional', icon: RotateCcw }
       ]
     }
   ];
@@ -344,7 +433,7 @@ export default function Layout() {
                                 <span className={cn(
                                   "px-1.5 py-0.2 rounded-full text-[9px] font-mono font-black shrink-0",
                                   sub.alert ? "bg-amber-500 text-black font-bold" : "bg-neutral-800 text-neutral-300"
-                                )}>
+                                  )}>
                                   {sub.badge}
                                 </span>
                               )}
@@ -357,8 +446,72 @@ export default function Layout() {
                 );
               })}
             </div>
+          ) : user?.role === 'PROGRAMADOR' ? (
+            /* MODO PROGRAMADOR: 5 GRUPOS VISUAIS PADRONIZADOS */
+            <div className="space-y-3">
+              <div className="px-2 pb-1 text-[10px] font-mono font-black uppercase tracking-wider text-neutral-500">
+                Processos do Programador
+              </div>
+
+              {gruposProgramador.map(grupo => {
+                const isOpen = openGrupos[grupo.id] !== false; // Padrão aberto se não falseado ou ativo
+                const isGroupActive = grupo.submenus.some(s => location.pathname === s.path.split('?')[0]);
+
+                return (
+                  <div key={grupo.id} className="rounded-2xl overflow-hidden border border-neutral-800/80 bg-neutral-950/40">
+                    {/* Header do Grupo com Identidade Visual Padronizada */}
+                    <button
+                      type="button"
+                      onClick={() => toggleGrupo(grupo.id)}
+                      className={cn(
+                        "w-full px-3 py-2.5 flex items-center justify-between transition-colors text-xs font-bold text-left cursor-pointer",
+                        isGroupActive ? grupo.corHeaderBg : "hover:bg-neutral-800/60 text-neutral-300"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-xs">{grupo.badgeCor}</span>
+                        <span className="truncate tracking-tight font-black">{grupo.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-neutral-400" /> : <ChevronRight className="w-3.5 h-3.5 text-neutral-400" />}
+                      </div>
+                    </button>
+
+                    {/* Submenus Expansíveis */}
+                    {isOpen && (
+                      <div className="p-1 space-y-0.5 bg-neutral-900/60">
+                        {grupo.submenus.map((sub, idx) => {
+                          const SubIcon = sub.icon;
+                          const subBase = sub.path.split('?')[0];
+                          const isSubActive = location.pathname === subBase && 
+                            (!sub.path.includes('?') || location.search.includes(sub.path.split('?')[1]));
+
+                          return (
+                            <Link
+                              key={`${sub.path}-${idx}`}
+                              to={sub.path}
+                              className={cn(
+                                "flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[11px] transition-all",
+                                isSubActive
+                                  ? grupo.corBorderActive
+                                  : cn("text-neutral-400 hover:text-white", grupo.corBgHover)
+                              )}
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <SubIcon className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{sub.name}</span>
+                              </div>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           ) : (
-            /* DEMAIS ROLES (Programador, Operador, Estoque, Financeiro) */
+            /* DEMAIS ROLES (Operador, Estoque, Financeiro) */
             <>
               {navItems.map((item) => {
                 const Icon = item.icon;
@@ -379,27 +532,6 @@ export default function Layout() {
                   </Link>
                 );
               })}
-
-              {user?.role === 'PROGRAMADOR' && (
-                <div className="pt-3 mt-3 border-t border-neutral-800/80">
-                  <div className="px-4 mb-2 text-[11px] font-semibold tracking-wider text-neutral-500 uppercase flex items-center justify-between">
-                    <span>Administração</span>
-                    <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-mono">ADMIN</span>
-                  </div>
-                  <Link
-                    to="/administracao/reset-operacional"
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-3 rounded-xl transition-colors",
-                      location.pathname === "/administracao/reset-operacional"
-                        ? "bg-red-500/10 text-red-400 font-medium border border-red-500/20"
-                        : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                    )}
-                  >
-                    <RotateCcw className="w-5 h-5 text-red-400" />
-                    Reset Operacional
-                  </Link>
-                </div>
-              )}
             </>
           )}
 
@@ -464,6 +596,32 @@ export default function Layout() {
                   </div>
                 ))}
               </div>
+            ) : user?.role === 'PROGRAMADOR' ? (
+              <div className="space-y-3">
+                <div className="px-2 text-xs font-mono font-bold uppercase text-neutral-500">
+                  Processos do Programador
+                </div>
+                {gruposProgramador.map(grupo => (
+                  <div key={grupo.id} className="rounded-xl border border-neutral-800 overflow-hidden bg-neutral-950/50">
+                    <div className={cn("p-3 font-bold text-sm flex items-center gap-2", grupo.corHeaderBg)}>
+                      <span>{grupo.badgeCor}</span>
+                      <span>{grupo.name}</span>
+                    </div>
+                    <div className="p-2 space-y-1">
+                      {grupo.submenus.map((sub, idx) => (
+                        <Link
+                          key={`${sub.path}-${idx}`}
+                          to={sub.path}
+                          onClick={() => setIsMobileMenuOpen(false)}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800"
+                        >
+                          <span>{sub.name}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               navItems.map((item) => {
                 const Icon = item.icon;
@@ -508,11 +666,15 @@ export default function Layout() {
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="text-sm font-medium text-white">{user?.role}</div>
-              <div className="text-xs text-neutral-500">rafael.rbsouza.RV@gmail.com</div>
+              <div className="text-sm font-medium text-white">{user?.nome || user?.role}</div>
+              <div className="text-xs text-neutral-400">{user?.email || ''}</div>
             </div>
-            <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-blue-500 font-bold">
-              {user?.role?.charAt(0)}
+            <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-blue-500 font-bold overflow-hidden">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.nome || user.role} className="w-full h-full object-cover" />
+              ) : (
+                user?.role?.charAt(0)
+              )}
             </div>
           </div>
         </header>

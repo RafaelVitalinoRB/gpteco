@@ -1,9 +1,27 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { useOperadores } from '../../hooks/useOperadores';
-import { Activity, Play, CheckCircle, Clock, X, TrendingUp, Users, Package, Scale, AlertTriangle } from 'lucide-react';
+import { 
+  Activity, 
+  Play, 
+  CheckCircle, 
+  Clock, 
+  X, 
+  TrendingUp, 
+  Users, 
+  Package, 
+  Scale, 
+  AlertTriangle,
+  FileText,
+  AlertCircle,
+  Cpu,
+  Calendar,
+  Layers,
+  Sparkles
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { getLotesDisponiveis } from '../../services/estoqueClienteService';
 
 export default function DashboardProgramador() {
   const { ops, rolos, clientes, eventosProducao } = useStore();
@@ -178,57 +196,230 @@ export default function DashboardProgramador() {
       }
     });
 
+    // 1. OPs aguardando programação (criadas mas sem máquina ou em status PENDENTE / PREPARANDO)
+    const opsAguardandoProgramacao = ops.filter(o => 
+      !o.maquina || o.status === 'PENDENTE' || o.status === 'PREPARANDO' || !o.status
+    );
+
+    // 2. Clientes aguardando programação (clientes com OPs aguardando programação)
+    const clientesAguardandoIds = new Set(opsAguardandoProgramacao.map(o => o.clienteId).filter(Boolean));
+    const clientesAguardandoProgramacaoCount = clientesAguardandoIds.size;
+
+    // 3. Estoque disponível (kg total em estoque de matéria-prima)
+    const lotes = getLotesDisponiveis();
+    const estoqueDisponivelKg = lotes.reduce((acc, l) => acc + (l.pesoDisponivelKg ?? l.pesoLiquido ?? 0), 0);
+
+    // 4. OPs com material insuficiente (OPs aguardando cuja matéria-prima é insuficiente)
+    const opsMaterialInsuficiente = opsAguardandoProgramacao.filter(o => {
+      const pesoNec = o.pesoEstimadoKg || 0;
+      if (pesoNec <= 0) return false;
+      const lotesCliente = lotes.filter(l => String(l.clienteId) === String(o.clienteId));
+      const saldoCliente = lotesCliente.reduce((acc, l) => acc + (l.pesoDisponivelKg ?? l.pesoLiquido ?? 0), 0);
+      return saldoCliente < pesoNec;
+    });
+
+    // 5. Máquinas disponíveis (máquinas que não estão produzindo ativamente nem rodando)
+    const maquinasDisponiveisCount = maquinas.filter(m => {
+      const live = liveStatusMap[m];
+      if (live?.status === 'PRODUZINDO' || live?.status === 'CONFERENCIA' || live?.status === 'PROXIMO_ROLO') return false;
+      const stats = getMachineStats(m);
+      if (stats.op && (stats.rolo?.status === 'EM_ANDAMENTO' || stats.rolo?.status === 'PARADO')) return false;
+      return true;
+    }).length;
+
+    // 6. Produções previstas para o dia (OPs ativas, em andamento ou planejadas para hoje)
+    const producoesPrevistasDia = ops.filter(o => {
+      const st = (o.status || '').toUpperCase();
+      if (st === 'FINALIZADA' || st === 'CANCELADA') return false;
+      return true;
+    }).length;
+
     return {
       rolosProduzidos: rolosHoje.length,
       kgProduzidos: kgHoje.toFixed(2),
       maquinaMaisProdutiva,
-      operadorMaisProdutivo
+      operadorMaisProdutivo,
+      // Indicadores Operacionais da Sprint UX 1
+      opsAguardandoCount: opsAguardandoProgramacao.length,
+      clientesAguardandoCount: clientesAguardandoProgramacaoCount,
+      estoqueDisponivelKg: estoqueDisponivelKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+      opsMaterialInsuficienteCount: opsMaterialInsuficiente.length,
+      maquinasDisponiveisCount,
+      producoesPrevistasDia
     };
-  }, [rolos, ops, operadores]);
+  }, [rolos, ops, operadores, liveStatusMap, maquinas]);
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-white tracking-tight">Dashboard</h1>
-        <p className="text-neutral-400 mt-2">Visão geral da produção</p>
+    <div className="space-y-8 animate-in fade-in duration-200">
+      {/* Cabeçalho do Módulo Programador com Padrão do Escritório */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-xl">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">
+            <span>TEXLOG ERP</span>
+            <span className="text-neutral-600">•</span>
+            <span className="text-blue-400 font-black">Módulo Programador</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+            Planejamento & Controle da Produção
+          </h1>
+          <p className="text-xs sm:text-sm text-neutral-400 mt-1 max-w-2xl">
+            Gestão integrada de planejamento têxtil, saldo de materiais, ordens de produção e monitoramento em tempo real.
+          </p>
+        </div>
+
+        {/* Links rápidos para ações prioritárias */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/programador/ops"
+            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-blue-500/20"
+          >
+            <FileText className="w-4 h-4" />
+            <span>Gerenciar OPs</span>
+          </Link>
+          <Link
+            to="/estoque"
+            className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer"
+          >
+            <Package className="w-4 h-4" />
+            <span>Estoque Clientes</span>
+          </Link>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
-            <Package className="w-6 h-6" />
+      {/* ========================================================================= */}
+      {/* 6 INDICADORES OPERACIONAIS EM FORMATO DE CARDS (SPRINT UX 1)              */}
+      {/* - OPs aguardando programação                                              */}
+      {/* - Clientes aguardando programação                                         */}
+      {/* - Estoque disponível                                                      */}
+      {/* - OPs com material insuficiente                                           */}
+      {/* - Máquinas disponíveis                                                    */}
+      {/* - Produções previstas para o dia                                          */}
+      {/* ========================================================================= */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        {/* Card 1: OPs aguardando programação */}
+        <Link
+          to="/programador/ops"
+          className="bg-neutral-900 border border-neutral-800 hover:border-blue-500/40 rounded-2xl p-5 transition-all flex flex-col justify-between group shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">OPs Aguardando</span>
+            <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <FileText className="w-4 h-4" />
+            </div>
           </div>
           <div>
-            <p className="text-sm font-medium text-neutral-400">Rolos Hoje</p>
-            <p className="text-2xl font-bold text-white">{metrics.rolosProduzidos}</p>
+            <div className="text-3xl font-black text-white">{metrics.opsAguardandoCount}</div>
+            <p className="text-[11px] text-neutral-400 mt-1">Aguardando programação</p>
           </div>
-        </div>
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-            <Scale className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-neutral-400">KG Produzidos Hoje</p>
-            <p className="text-2xl font-bold text-white">{metrics.kgProduzidos} kg</p>
-          </div>
-        </div>
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400">
-            <Users className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-neutral-400">Operador Destaque</p>
-            <p className="text-lg font-bold text-white truncate">{metrics.operadorMaisProdutivo}</p>
-          </div>
-        </div>
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400">
-            <TrendingUp className="w-6 h-6" />
+        </Link>
+
+        {/* Card 2: Clientes aguardando programação */}
+        <Link
+          to="/programador/clientes"
+          className="bg-neutral-900 border border-neutral-800 hover:border-amber-500/40 rounded-2xl p-5 transition-all flex flex-col justify-between group shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">Clientes</span>
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Users className="w-4 h-4" />
+            </div>
           </div>
           <div>
-            <p className="text-sm font-medium text-neutral-400">Máquina Destaque</p>
-            <p className="text-lg font-bold text-white">{metrics.maquinaMaisProdutiva}</p>
+            <div className="text-3xl font-black text-white">{metrics.clientesAguardandoCount}</div>
+            <p className="text-[11px] text-neutral-400 mt-1">Aguardando programação</p>
           </div>
+        </Link>
+
+        {/* Card 3: Estoque disponível */}
+        <Link
+          to="/estoque"
+          className="bg-neutral-900 border border-neutral-800 hover:border-emerald-500/40 rounded-2xl p-5 transition-all flex flex-col justify-between group shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">Estoque Total</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Package className="w-4 h-4" />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-black text-emerald-400">{metrics.estoqueDisponivelKg} <span className="text-xs font-normal text-neutral-400">kg</span></div>
+            <p className="text-[11px] text-neutral-400 mt-1">Matéria-prima disponível</p>
+          </div>
+        </Link>
+
+        {/* Card 4: OPs com material insuficiente */}
+        <Link
+          to="/programador/ops"
+          className={`border rounded-2xl p-5 transition-all flex flex-col justify-between group shadow-sm ${
+            metrics.opsMaterialInsuficienteCount > 0 
+              ? 'bg-red-500/10 border-red-500/30 hover:border-red-500/50' 
+              : 'bg-neutral-900 border-neutral-800 hover:border-neutral-700'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">Material Insuf.</span>
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform ${
+              metrics.opsMaterialInsuficienteCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-neutral-800 text-neutral-400'
+            }`}>
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+          </div>
+          <div>
+            <div className={`text-3xl font-black ${metrics.opsMaterialInsuficienteCount > 0 ? 'text-red-400' : 'text-white'}`}>
+              {metrics.opsMaterialInsuficienteCount}
+            </div>
+            <p className="text-[11px] text-neutral-400 mt-1">OPs com saldo insuficiente</p>
+          </div>
+        </Link>
+
+        {/* Card 5: Máquinas disponíveis */}
+        <Link
+          to="/programador/maquinas"
+          className="bg-neutral-900 border border-neutral-800 hover:border-cyan-500/40 rounded-2xl p-5 transition-all flex flex-col justify-between group shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">Máquinas Livres</span>
+            <div className="w-9 h-9 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Cpu className="w-4 h-4" />
+            </div>
+          </div>
+          <div>
+            <div className="text-3xl font-black text-white">{metrics.maquinasDisponiveisCount} <span className="text-xs text-neutral-500 font-bold">/ 4</span></div>
+            <p className="text-[11px] text-neutral-400 mt-1">Prontas para produção</p>
+          </div>
+        </Link>
+
+        {/* Card 6: Produções previstas para o dia */}
+        <Link
+          to="/programador/maquinas"
+          className="bg-neutral-900 border border-neutral-800 hover:border-purple-500/40 rounded-2xl p-5 transition-all flex flex-col justify-between group shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">Previstas Dia</span>
+            <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Calendar className="w-4 h-4" />
+            </div>
+          </div>
+          <div>
+            <div className="text-3xl font-black text-purple-400">{metrics.producoesPrevistasDia}</div>
+            <p className="text-[11px] text-neutral-400 mt-1">OPs programadas / em linha</p>
+          </div>
+        </Link>
+      </div>
+
+      {/* Monitoramento Operacional e Telemetria das Máquinas */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+              <Activity className="w-5 h-5 text-blue-400" />
+              <span>Painel Operacional das Máquinas</span>
+            </h2>
+            <p className="text-xs text-neutral-400">Telemetria ao vivo sincronizada com os terminais dos operadores</p>
+          </div>
+          <span className="text-xs font-mono font-bold text-neutral-500 bg-neutral-900 border border-neutral-800 px-3 py-1 rounded-lg">
+            4 MÁQUINAS ATIVAS
+          </span>
         </div>
       </div>
 
