@@ -201,19 +201,6 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'texlog-storage-v2', // v2 to avoid conflicts with old structure during development
-      // SPRINT BETA 1.0: Remover persistência do usuário. O estado user NUNCA permanece salvo ao fechar o navegador.
-      partialize: (state) => ({
-        deviceConfig: state.deviceConfig,
-        clientes: state.clientes,
-        fiosCliente: state.fiosCliente,
-        especificacoes: state.especificacoes,
-        ops: state.ops,
-        rolos: state.rolos,
-        entradas: state.entradas,
-        saidas: state.saidas,
-        eventosProducao: state.eventosProducao,
-        movimentosRoletes: state.movimentosRoletes
-      }),
     }
   )
 );

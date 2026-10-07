@@ -20,9 +20,6 @@ export interface DeviceConfig {
 export interface User {
   role: Role;
   machine?: string;
-  email?: string;
-  nome?: string;
-  avatarUrl?: string;
 }
 
 export interface FioCliente {

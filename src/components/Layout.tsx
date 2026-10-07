@@ -40,7 +40,6 @@ import {
 import { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import GlobalSearch from './GlobalSearch';
-import { logoutUser } from '../services/authService';
 
 interface SubmenuItem {
   id: string;
@@ -143,9 +142,9 @@ export default function Layout() {
     }));
   };
 
-  const handleLogout = async () => {
-    await logoutUser();
-    navigate('/login', { replace: true });
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
   };
 
   // Estrutura Escritório 3.0: 4 Grupos Principais
@@ -666,15 +665,11 @@ export default function Layout() {
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="text-sm font-medium text-white">{user?.nome || user?.role}</div>
-              <div className="text-xs text-neutral-400">{user?.email || ''}</div>
+              <div className="text-sm font-medium text-white">{user?.role}</div>
+              <div className="text-xs text-neutral-500">rafael.rbsouza.RV@gmail.com</div>
             </div>
-            <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-blue-500 font-bold overflow-hidden">
-              {user?.avatarUrl ? (
-                <img src={user.avatarUrl} alt={user.nome || user.role} className="w-full h-full object-cover" />
-              ) : (
-                user?.role?.charAt(0)
-              )}
+            <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-blue-500 font-bold">
+              {user?.role?.charAt(0)}
             </div>
           </div>
         </header>
